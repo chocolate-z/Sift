@@ -64,8 +64,18 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/LogsView.vue'),
     meta: { title: '日志' }
   },
-  { path: '/settings', name: 'settings', component: ph, meta: { title: '设置' } },
-  { path: '/help', name: 'help', component: ph, meta: { title: '帮助' } }
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+    meta: { title: '设置' }
+  },
+  {
+    path: '/help',
+    name: 'help',
+    component: () => import('@/views/HelpView.vue'),
+    meta: { title: '帮助' }
+  }
 ]
 
 export const router = createRouter({
