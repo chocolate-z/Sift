@@ -1,0 +1,19 @@
+{
+  "name": "@sift/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sift 持久层:SQLite 规范 schema(迁移)+ 前后端共享行类型。Rust 端(src-tauri/infra)执行同一份 SQL。",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrations/*": "./migrations/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sift/core-ir": "workspace:*"
+  }
+}

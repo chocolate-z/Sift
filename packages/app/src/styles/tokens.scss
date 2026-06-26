@@ -1,0 +1,34 @@
+// Sift 设计系统 token(对应开发文档 §14.3)。以 CSS 自定义属性暴露,组件用 var() 引用。
+:root {
+  // 深色背景:炭灰而非死黑
+  --bg: #0e0e14;
+  --bg-sidebar: #0a0a10;
+  --bg-card: #16161e;
+  --bg-elevated: #1b1b24;
+
+  // 边框:极细低对比
+  --border: #26262e;
+  --border-subtle: #1b1b22;
+
+  // 强调色:靛蓝紫,克制
+  --accent: #7c5cfc;
+  --accent-2: #6d4ae0;
+  --accent-soft: rgba(124, 92, 252, 0.14);
+  --accent-text: #b6a4ff;
+
+  // 文字
+  --text: #e8e8f0;
+  --text-secondary: #8a8a99;
+  --text-dim: #6a6a76;
+
+  // 语义色(危险红保留给删除/失败/失效)
+  --danger: #e0443e;
+  --warning: #e0a85a;
+  --success: #2dd4bf;
+
+  // 形状与字体
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}

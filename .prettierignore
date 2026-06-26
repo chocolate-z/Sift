@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+# The development charter is authored by hand — leave its formatting untouched.
+Sift开发文档.md
+# Bundled HTML design mockups (minified, self-unpacking).
+design/*.html

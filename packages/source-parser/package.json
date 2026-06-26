@@ -1,0 +1,18 @@
+{
+  "name": "@sift/source-parser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sift line-B: book-source (书源) DSL translator → normalized Rule IR fragments",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "node-html-parser": "^8.0.3"
+  }
+}

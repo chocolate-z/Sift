@@ -1,0 +1,136 @@
+@use './tokens';
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  // 桌面观感:界面文本不可选,技术内容与输入框可选
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+// 技术/数据内容与输入框允许选中复制
+.mono,
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@keyframes siftPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+// subtle, theme-matched scrollbars (replace the chunky OS default)
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #34343f;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+// --- shared view scaffolding: per-screen header bar + scrollable body ---
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 28px;
+}
+.view-head h1 {
+  font-size: 18px;
+  font-weight: 650;
+}
+.view-head .sub {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.view-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+.placeholder {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+// --- generic card (used by placeholder demos until screens are fully built) ---
+.card {
+  max-width: 580px;
+  padding: 6px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.card .row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.card .row:last-child {
+  border-bottom: 0;
+}
+.card .k {
+  width: 80px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.badge {
+  padding: 1px 9px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid rgba(124, 92, 252, 0.35);
+  border-radius: 6px;
+  font-size: 12px;
+}
