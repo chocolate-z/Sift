@@ -9,14 +9,18 @@
 //! - 【管线层】值后处理:regex 清洗/抽取、base64 解码、urlReplace、resolveUrl、
 //!   trim、join;脚本 op 留待 phase-3 沙箱。
 //! - 【执行层】RequestConfig 降级:占位符模板替换、defaults 合并、凭据→Cookie。
-//!   多步驱动(变量穿线/fanout/翻页/输出)在此之上构建(后续小步)。
+//! - 【多步驱动】run_rule:按 steps 顺序串四层,变量穿线(inputs/produces + fanout
+//!   绑定上游项)、fanout(once/perItem)、输出友好列装配。翻页留待后续小步。
 
+pub mod driver;
 pub mod error;
 pub mod exec;
 pub mod parse;
 pub mod pipeline;
 pub mod request;
+pub mod rule;
 
+pub use driver::{run_rule, RunOutput};
 pub use error::{EngineError, EngineResult};
 pub use exec::{lower_request, substitute, Credentials, RequestConfig, UrlSource, VarScope};
 pub use parse::{
@@ -27,4 +31,7 @@ pub use pipeline::{apply_pipeline, apply_pipeline_str, PipelineContext, Pipeline
 pub use request::{
     FetchRequest, FetchResponse, HttpClient, HttpMethod, RateLimiter, RequestBody, RetryPolicy,
     UrlReplaceRule,
+};
+pub use rule::{
+    CollectStep, EntryPoint, Fanout, OutputColumn, OutputSpec, Pagination, Rule, RuleMeta,
 };
