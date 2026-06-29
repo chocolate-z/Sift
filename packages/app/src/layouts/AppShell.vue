@@ -92,7 +92,7 @@ const clock = '16:57:11'
     <div class="titlebar" data-tauri-drag-region>
       <div class="brand">
         <span class="logo" aria-hidden="true">
-          <svg width="24" height="24" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <svg width="20" height="20" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
             <g fill="none">
               <path
                 fill="#b0b0af"
@@ -261,8 +261,8 @@ const clock = '16:57:11'
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   flex: none;
 }
 .brand .name {
