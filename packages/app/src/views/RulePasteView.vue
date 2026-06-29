@@ -1,25 +1,38 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { parseBookSource, type ParseResult } from '@sift/source-parser'
+import { compileSearchRule, parseBookSource, type ParseResult } from '@sift/source-parser'
 import { SAMPLE_SOURCES } from '@/data/sampleSources'
+import { isTauri, runRule } from '@/services/engine'
+import { useDatasetStore } from '@/stores/dataset'
 
 const router = useRouter()
+const dataset = useDatasetStore()
 
 const input = ref(JSON.stringify(SAMPLE_SOURCES.jgb, null, 2))
 const result = ref<ParseResult | null>(null)
 const error = ref<string | null>(null)
+const rawObj = ref<Record<string, unknown> | null>(null)
+
+const keyword = ref('剑来')
+const running = ref(false)
+const runError = ref<string | null>(null)
+const runNotice = ref<string | null>(null)
 
 function parse() {
   error.value = null
+  runError.value = null
+  runNotice.value = null
   let raw: unknown
   try {
     raw = JSON.parse(input.value)
   } catch (e) {
     result.value = null
+    rawObj.value = null
     error.value = `JSON 解析失败:${(e as Error).message}`
     return
   }
+  rawObj.value = raw as Record<string, unknown>
   try {
     result.value = parseBookSource(raw as Parameters<typeof parseBookSource>[0])
   } catch (e) {
@@ -30,6 +43,33 @@ function parse() {
 function loadSample(key: 'qimao' | 'jgb') {
   input.value = JSON.stringify(SAMPLE_SOURCES[key], null, 2)
   parse()
+}
+
+async function runSearch() {
+  if (!rawObj.value) return
+  runError.value = null
+  runNotice.value = null
+  const rule = compileSearchRule(rawObj.value as Parameters<typeof compileSearchRule>[0])
+  const param = rule.entry.kind === 'keyword' ? rule.entry.param : 'keyword'
+  if (!isTauri) {
+    runNotice.value = '搜索预览仅在桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
+    return
+  }
+  running.value = true
+  try {
+    const out = await runRule(rule, { [param]: keyword.value })
+    dataset.setResult(
+      rule.output.columns.map((c) => ({ name: c.name, field: c.fromField, type: c.type })),
+      out.records,
+      rule.meta.name,
+      out.warnings
+    )
+    router.push('/data')
+  } catch (e) {
+    runError.value = `运行失败:${(e as Error).message}`
+  } finally {
+    running.value = false
+  }
 }
 const statusMeta: Record<string, { label: string; cls: string }> = {
   ok: { label: '解析成功', cls: 'ok' },
@@ -80,6 +120,24 @@ onMounted(parse)
         </div>
 
         <template v-else-if="result">
+          <!-- 搜索预览 · 接采集引擎 -->
+          <div class="rpanel run-panel">
+            <div class="rp-title">搜索预览 · 接采集引擎</div>
+            <div class="run-row">
+              <input
+                v-model="keyword"
+                class="kw-input mono"
+                placeholder="关键词,如 剑来"
+                spellcheck="false"
+                @keyup.enter="runSearch" />
+              <button type="button" class="btn-run" :disabled="running" @click="runSearch">
+                {{ running ? '运行中…' : '搜索预览' }}
+              </button>
+            </div>
+            <div v-if="runError" class="run-msg err">✕ {{ runError }}</div>
+            <div v-else-if="runNotice" class="run-msg notice">{{ runNotice }}</div>
+          </div>
+
           <!-- 概览 -->
           <div class="rpanel">
             <div class="ov-row">
@@ -336,6 +394,56 @@ onMounted(parse)
   font-size: 11px;
   color: #7a7a87;
   font-weight: 400;
+}
+
+/* 搜索预览 */
+.run-row {
+  display: flex;
+  gap: 9px;
+}
+.kw-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  background: #0b0b11;
+  border: 1px solid #24242e;
+  border-radius: 9px;
+  color: #cdccd8;
+  font-size: 13px;
+  outline: none;
+}
+.kw-input:focus {
+  border-color: var(--accent);
+}
+.btn-run {
+  flex: none;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 9px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
+}
+.btn-run:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.run-msg {
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.run-msg.err {
+  color: #f1837d;
+}
+.run-msg.notice {
+  color: #d8b27a;
 }
 
 /* 概览 */

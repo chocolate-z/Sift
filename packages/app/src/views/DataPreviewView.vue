@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DropdownMenuContent,
@@ -8,12 +8,16 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger
 } from 'reka-ui'
+import { useDatasetStore } from '@/stores/dataset'
 
 const router = useRouter()
+const ds = useDatasetStore()
 
 const formats = ['CSV', 'JSON', 'Excel', 'TXT', 'EPUB']
 const exportFormat = ref('CSV')
-const rows = [
+
+// 1:1 演示种子(未跑引擎时显示,保持原视觉)。
+const seedRows = [
   { title: '剑来', price: '¥39.00', img: '/img/12345.jpg' },
   { title: '大奉打更人', price: '¥28.00', img: '/img/12346.jpg' },
   { title: '诡秘之主', price: '¥45.00', img: '/img/12347.jpg' },
@@ -21,8 +25,26 @@ const rows = [
   { title: '三体', price: '¥35.00', img: '/img/12349.jpg' }
 ]
 
-const selected = ref<boolean[]>(rows.map(() => true))
-const allChecked = computed(() => selected.value.every(Boolean))
+// 跑过引擎(ds.active)走真实数据动态表;否则种子表。
+const showReal = computed(() => ds.active && ds.rows.length > 0)
+const activeCount = computed(() => (ds.active ? ds.rows.length : seedRows.length))
+const fieldsLabel = computed(() => (ds.active ? ds.columns.map((c) => c.name).join(' · ') : '标题 · 价格 · 封面'))
+const fromLabel = computed(() => (ds.active ? '来自规则' : '来自点选'))
+const firstField = computed(() => ds.columns[0]?.field)
+const gridTemplate = computed(
+  () => '44px ' + ds.columns.map((c) => (c.type === 'image' ? '130px' : 'minmax(0,1fr)')).join(' ')
+)
+
+const selected = ref<boolean[]>([])
+watch(
+  activeCount,
+  (n) => {
+    selected.value = Array.from({ length: n }, (_, i) => selected.value[i] ?? true)
+  },
+  { immediate: true }
+)
+
+const allChecked = computed(() => selected.value.length > 0 && selected.value.every(Boolean))
 const indeterminate = computed(() => selected.value.some(Boolean) && !allChecked.value)
 const selectedCount = computed(() => selected.value.filter(Boolean).length)
 function toggleAll() {
@@ -31,6 +53,13 @@ function toggleAll() {
 }
 function toggleRow(i: number) {
   selected.value[i] = !selected.value[i]
+}
+function cellText(v: string | null | undefined) {
+  return v == null || v === '' ? '—' : v
+}
+function cellClass(field: string, type?: string) {
+  if (type === 'image') return 'link mono'
+  return field === firstField.value ? 'title' : ''
 }
 function downloadSelected() {
   if (selectedCount.value === 0) return
@@ -47,7 +76,7 @@ function downloadSelected() {
           <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor">
             <path d="M3 2l9 3.6-3.7 1.2L7 11.8 3 2z" />
           </svg>
-          来自点选
+          {{ fromLabel }}
         </span>
         <span class="title-sub">书城商品列表 · 点选与规则两条采集线汇聚于此</span>
       </div>
@@ -66,12 +95,12 @@ function downloadSelected() {
             <path d="M3 8.5l3 3 7-7" />
           </svg>
           抓取完成 · 已抓
-          <span class="mono">5</span>
+          <span class="mono">{{ activeCount }}</span>
           条
         </span>
         <span class="fields">
           字段
-          <span class="mono fv">标题 · 价格 · 封面</span>
+          <span class="mono fv">{{ fieldsLabel }}</span>
         </span>
         <div class="sr-right">
           <DropdownMenuRoot>
@@ -135,8 +164,65 @@ function downloadSelected() {
     </header>
 
     <div class="body">
-      <!-- 有数据 -->
-      <template v-if="rows.length">
+      <!-- 真实数据(跑过引擎)· 列由规则 output 驱动 -->
+      <template v-if="showReal">
+        <div class="table">
+          <div class="t-head" :style="{ gridTemplateColumns: gridTemplate }">
+            <div class="th-check">
+              <span class="checkbox" :class="{ on: allChecked || indeterminate }" @click="toggleAll">
+                <svg
+                  v-if="allChecked"
+                  width="9"
+                  height="9"
+                  viewBox="0 0 16 16"
+                  stroke="#fff"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M3 8.5l3 3 7-7" />
+                </svg>
+                <span v-else-if="indeterminate" class="cb-dash" />
+              </span>
+            </div>
+            <div v-for="c in ds.columns" :key="c.field" class="th">{{ c.name }}</div>
+          </div>
+          <div
+            v-for="(r, i) in ds.rows"
+            :key="i"
+            class="t-row"
+            :class="{ last: i === ds.rows.length - 1 }"
+            :style="{ gridTemplateColumns: gridTemplate }">
+            <div class="td-check">
+              <span class="checkbox" :class="{ on: selected[i] }" @click="toggleRow(i)">
+                <svg
+                  v-if="selected[i]"
+                  width="9"
+                  height="9"
+                  viewBox="0 0 16 16"
+                  stroke="#fff"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M3 8.5l3 3 7-7" />
+                </svg>
+              </span>
+            </div>
+            <div v-for="c in ds.columns" :key="c.field" class="td" :class="cellClass(c.field, c.type)">
+              {{ cellText(r[c.field]) }}
+            </div>
+          </div>
+        </div>
+        <div class="vnote">
+          <span class="vdot" />
+          共 {{ ds.rows.length }} 条 · 来自 {{ ds.sourceName }}
+          <span class="vdot" />
+        </div>
+      </template>
+
+      <!-- 1:1 演示种子(未跑引擎) -->
+      <template v-else-if="!ds.active">
         <div class="table">
           <div class="t-head">
             <div class="th-check">
@@ -161,7 +247,7 @@ function downloadSelected() {
             <div class="th">价格</div>
             <div class="th">封面链接</div>
           </div>
-          <div v-for="(r, i) in rows" :key="r.title" class="t-row" :class="{ last: i === rows.length - 1 }">
+          <div v-for="(r, i) in seedRows" :key="r.title" class="t-row" :class="{ last: i === seedRows.length - 1 }">
             <div class="td-check">
               <span class="checkbox" :class="{ on: selected[i] }" @click="toggleRow(i)">
                 <svg
@@ -193,7 +279,7 @@ function downloadSelected() {
         </div>
       </template>
 
-      <!-- 空态 -->
+      <!-- 跑过但无结果 -->
       <div v-else class="empty">
         <div class="empty-ico">
           <svg
@@ -209,9 +295,9 @@ function downloadSelected() {
             <path d="M2.5 6.5h11M6 6.5v6.5" />
           </svg>
         </div>
-        <div class="empty-title">还没有数据</div>
-        <div class="empty-desc">运行一个采集任务后,抓取到的结构化数据会在这里以表格呈现。</div>
-        <button type="button" class="btn-primary" @click="router.push('/tasks')">去采集数据</button>
+        <div class="empty-title">本次未抓到数据</div>
+        <div class="empty-desc">规则已执行,但没有匹配到任何结果。可回到规则导入检查选择器或换个关键词。</div>
+        <button type="button" class="btn-primary" @click="router.push('/import/paste')">回到规则</button>
       </div>
     </div>
   </section>
