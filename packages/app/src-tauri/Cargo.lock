@@ -3583,6 +3583,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "sift-engine"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "encoding_rs",
  "regex",
  "reqwest 0.12.28",
@@ -3590,6 +3591,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "url",
  "wiremock",
 ]
 

@@ -6,9 +6,12 @@
 //!   限速、url_replace_rules。
 //! - 【解析层】CSS(含 :gt/:lt/:eq 伪类转译)+ JSONPath(书源 key$$ 点号路径);
 //!   列表/单页、fallback 备选、文本/属性/html 取值。XPath 待后续小步。
+//! - 【管线层】值后处理:regex 清洗/抽取、base64 解码、urlReplace、resolveUrl、
+//!   trim、join;脚本 op 留待 phase-3 沙箱。
 
 pub mod error;
 pub mod parse;
+pub mod pipeline;
 pub mod request;
 
 pub use error::{EngineError, EngineResult};
@@ -16,6 +19,7 @@ pub use parse::{
     ContentFilter, Extraction, FieldRule, ListSpec, ParseOutput, ParseSpec, Record, SelectorExpr,
     Shape,
 };
+pub use pipeline::{apply_pipeline, apply_pipeline_str, PipelineContext, PipelineOp};
 pub use request::{
     FetchRequest, FetchResponse, HttpClient, HttpMethod, RateLimiter, RequestBody, RetryPolicy,
     UrlReplaceRule,
