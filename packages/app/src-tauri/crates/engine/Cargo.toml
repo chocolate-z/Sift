@@ -1,0 +1,20 @@
+[package]
+name = "sift-engine"
+version = "0.1.0"
+description = "Sift 采集引擎"
+authors = ["xiaozhong"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "sift_engine"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["gzip", "brotli", "deflate"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+encoding_rs = "0.8"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+wiremock = "0.6"
