@@ -20,6 +20,17 @@ import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 
+// 桌面窗口控件:仅在 Tauri 运行时动态调用,浏览器预览中为无操作
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+async function win(action: 'min' | 'max' | 'close') {
+  if (!isTauri) return
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  const w = getCurrentWindow()
+  if (action === 'min') await w.minimize()
+  else if (action === 'max') await w.toggleMaximize()
+  else await w.close()
+}
+
 interface NavItem {
   label: string
   to: string
@@ -78,7 +89,7 @@ const clock = '16:57:11'
 <template>
   <div class="app">
     <!-- title bar -->
-    <div class="titlebar">
+    <div class="titlebar" data-tauri-drag-region>
       <div class="brand">
         <span class="logo" aria-hidden="true">
           <svg width="24" height="24" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
@@ -118,19 +129,19 @@ const clock = '16:57:11'
           PRO
         </span>
       </div>
-      <div class="drag" />
+      <div class="drag" data-tauri-drag-region />
       <div class="win">
-        <button type="button" aria-label="最小化">
+        <button type="button" aria-label="最小化" @click="win('min')">
           <svg width="13" height="13" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.3">
             <path d="M3 8h10" />
           </svg>
         </button>
-        <button type="button" aria-label="最大化">
+        <button type="button" aria-label="最大化" @click="win('max')">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
             <rect x="3" y="3" width="10" height="10" rx="1.5" />
           </svg>
         </button>
-        <button type="button" class="close" aria-label="关闭">
+        <button type="button" class="close" aria-label="关闭" @click="win('close')">
           <svg width="12" height="12" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.3">
             <path d="M4 4l8 8M12 4l-8 8" />
           </svg>

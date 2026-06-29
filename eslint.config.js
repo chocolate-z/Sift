@@ -4,7 +4,7 @@ import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**']
+    ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/src-tauri/target/**', '**/src-tauri/gen/**']
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

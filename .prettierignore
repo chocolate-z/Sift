@@ -2,6 +2,9 @@ node_modules
 dist
 coverage
 pnpm-lock.yaml
+# Tauri 生成物(Rust 编译产物 / ACL schema)
+packages/app/src-tauri/target
+packages/app/src-tauri/gen
 # The development charter is authored by hand — leave its formatting untouched.
 Sift开发文档.md
 # Bundled HTML design mockups (minified, self-unpacking).
