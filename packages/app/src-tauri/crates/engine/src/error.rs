@@ -2,13 +2,15 @@ use std::fmt;
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
-/// 引擎错误。请求层目前只产生 HTTP / 参数两类;解析、管线层后续扩展变体。
+/// 引擎错误。请求层产生 HTTP / 参数两类;解析层增加 Parse;管线层后续扩展。
 #[derive(Debug)]
 pub enum EngineError {
     /// 底层 HTTP 失败(连接、超时、协议、读取响应体等)。
     Http(reqwest::Error),
     /// 请求构造非法(空 URL、不合法的头等)。
     InvalidRequest(String),
+    /// 解析失败(JSON 文档非法等)。无效的单个选择器记为 warning,不中断整体解析。
+    Parse(String),
 }
 
 impl fmt::Display for EngineError {
@@ -16,6 +18,7 @@ impl fmt::Display for EngineError {
         match self {
             EngineError::Http(e) => write!(f, "HTTP 请求失败: {e}"),
             EngineError::InvalidRequest(m) => write!(f, "请求非法: {m}"),
+            EngineError::Parse(m) => write!(f, "解析失败: {m}"),
         }
     }
 }
@@ -24,7 +27,7 @@ impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             EngineError::Http(e) => Some(e),
-            EngineError::InvalidRequest(_) => None,
+            EngineError::InvalidRequest(_) | EngineError::Parse(_) => None,
         }
     }
 }
@@ -41,7 +44,7 @@ impl EngineError {
     pub fn is_retryable(&self) -> bool {
         match self {
             EngineError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
-            EngineError::InvalidRequest(_) => false,
+            EngineError::InvalidRequest(_) | EngineError::Parse(_) => false,
         }
     }
 }
