@@ -10,6 +10,7 @@ export * from './types'
 export * from './decoders'
 export * from './pseudo'
 export * from './parser'
+export * from './compile'
 
 /**
  * Integration helper validating the chosen HTML parser (node-html-parser): run a

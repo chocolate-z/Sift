@@ -86,6 +86,9 @@ importers:
 
   packages/source-parser:
     dependencies:
+      '@sift/core-ir':
+        specifier: workspace:*
+        version: link:../core-ir
       node-html-parser:
         specifier: ^8.0.3
         version: 8.0.3
