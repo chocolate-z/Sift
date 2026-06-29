@@ -21,6 +21,7 @@ const DEFAULT_MAX_PAGES: u32 = 50;
 
 /// 一轮采集的产物。
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunOutput {
     /// 友好列装配后的数据集行(供 UI 表格 / 导出)。
     pub records: Vec<BTreeMap<String, Option<String>>>,

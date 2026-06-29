@@ -1,3 +1,5 @@
+mod engine_cmd;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -11,6 +13,10 @@ pub fn run() {
       }
       Ok(())
     })
+    .invoke_handler(tauri::generate_handler![
+      engine_cmd::engine_run_rule,
+      engine_cmd::engine_version
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
