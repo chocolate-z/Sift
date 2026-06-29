@@ -246,7 +246,7 @@ const clock = '16:57:11'
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: 34px;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-subtle);
   padding: 0 0 0 16px;
@@ -294,7 +294,7 @@ const clock = '16:57:11'
   display: grid;
   place-items: center;
   width: 46px;
-  height: 44px;
+  height: 34px;
   background: none;
   border: 0;
   color: var(--text-secondary);
