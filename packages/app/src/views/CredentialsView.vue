@@ -1,58 +1,71 @@
 <script setup lang="ts">
+import { computed, reactive, ref } from 'vue'
+import {
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle
+} from 'reka-ui'
 // 凭据本地 AES-256 加密,明文仅在请求时于内存临时解密。
-interface Cred {
-  name: string
-  domain: string
-  icon: 'lock' | 'proxy'
-  iconColor: 'amber' | 'green' | 'mutedred'
-  type: 'Cookie' | '代理' | 'Token'
-  status: 'valid' | 'expiring' | 'invalid'
-  lastUse: string
-}
-const creds: Cred[] = [
-  {
-    name: '七猫账号 Cookie',
-    domain: 'www.qimao.com',
-    icon: 'lock',
-    iconColor: 'amber',
-    type: 'Cookie',
-    status: 'valid',
-    lastUse: '2 分钟前'
-  },
-  {
-    name: '旧钢笔会话',
-    domain: 'www.jiugangbi.com',
-    icon: 'lock',
-    iconColor: 'amber',
-    type: 'Cookie',
-    status: 'expiring',
-    lastUse: '1 小时前'
-  },
-  {
-    name: '本地代理',
-    domain: 'http://127.0.0.1:7890',
-    icon: 'proxy',
-    iconColor: 'green',
-    type: '代理',
-    status: 'valid',
-    lastUse: '使用中'
-  },
-  {
-    name: '书城 API Token',
-    domain: 'book.example.com',
-    icon: 'lock',
-    iconColor: 'mutedred',
-    type: 'Token',
-    status: 'invalid',
-    lastUse: '3 天前'
-  }
-]
+import { useCredentialsStore, type Cred, type CredType } from '@/stores/credentials'
+
+const store = useCredentialsStore()
+
 const statusMeta = {
   valid: { label: '有效', cls: 'valid' },
   expiring: { label: '即将过期', cls: 'expiring' },
   invalid: { label: '已失效', cls: 'invalid' }
 }
 const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
+const credIcon = (c: Cred): 'lock' | 'proxy' => (c.type === '代理' ? 'proxy' : 'lock')
+const credIconColor = (c: Cred): 'amber' | 'green' | 'mutedred' =>
+  c.type === '代理' ? 'green' : c.status === 'invalid' ? 'mutedred' : 'amber'
+
+// 新增 / 编辑对话框
+const dialogOpen = ref(false)
+const editingId = ref<number | null>(null)
+const form = reactive<{ name: string; type: CredType; domain: string; secret: string }>({
+  name: '',
+  type: 'Cookie',
+  domain: '',
+  secret: ''
+})
+const domainLabel = computed(() => (form.type === '代理' ? '地址' : '域名'))
+const domainPlaceholder = computed(() => (form.type === '代理' ? 'http://127.0.0.1:7890' : 'www.example.com'))
+function openCreate() {
+  editingId.value = null
+  form.name = ''
+  form.type = 'Cookie'
+  form.domain = ''
+  form.secret = ''
+  dialogOpen.value = true
+}
+function openEdit(c: Cred) {
+  editingId.value = c.id
+  form.name = c.name
+  form.type = c.type
+  form.domain = c.domain
+  form.secret = ''
+  dialogOpen.value = true
+}
+function submitCred() {
+  if (!form.name.trim()) return
+  if (editingId.value === null) {
+    store.addCred({
+      name: form.name.trim(),
+      type: form.type,
+      domain: form.domain.trim(),
+      status: 'valid',
+      lastUse: '从未使用'
+    })
+  } else {
+    store.updateCred(editingId.value, { name: form.name.trim(), type: form.type, domain: form.domain.trim() })
+  }
+  dialogOpen.value = false
+}
 </script>
 
 <template>
@@ -63,7 +76,7 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
           <h1>凭据管理</h1>
           <p class="sub">Cookie、Token 与代理凭据 · 本地 AES-256 加密,绝不上传</p>
         </div>
-        <button type="button" class="btn-new">+ 新增凭据</button>
+        <button type="button" class="btn-new" @click="openCreate">+ 新增凭据</button>
       </div>
     </header>
 
@@ -76,7 +89,7 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
         <span class="ib-text">凭据使用系统密钥链加密存储。明文仅在发起请求时于内存中临时解密。</span>
       </div>
 
-      <div class="table">
+      <div v-if="store.creds.length" class="table">
         <div class="t-head">
           <span>凭据 / 域名</span>
           <span>类型</span>
@@ -84,15 +97,15 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
           <span>最近使用</span>
           <span class="r">操作</span>
         </div>
-        <div v-for="(c, i) in creds" :key="c.name" class="t-row" :class="{ last: i === creds.length - 1 }">
+        <div v-for="(c, i) in store.creds" :key="c.id" class="t-row" :class="{ last: i === store.creds.length - 1 }">
           <div class="cred-id">
             <svg
-              v-if="c.icon === 'lock'"
+              v-if="credIcon(c) === 'lock'"
               width="14"
               height="14"
               viewBox="0 0 16 16"
               fill="none"
-              :stroke="iconStroke[c.iconColor]"
+              :stroke="iconStroke[credIconColor(c)]"
               stroke-width="1.5"
               class="ci">
               <rect x="3.5" y="7" width="9" height="6" rx="1.2" />
@@ -104,7 +117,7 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
               height="14"
               viewBox="0 0 16 16"
               fill="none"
-              :stroke="iconStroke[c.iconColor]"
+              :stroke="iconStroke[credIconColor(c)]"
               stroke-width="1.5"
               class="ci">
               <circle cx="6" cy="6" r="2.6" />
@@ -124,12 +137,75 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
           </span>
           <span class="last-use">{{ c.lastUse }}</span>
           <span class="actions">
-            <span class="act-edit">编辑</span>
-            <span class="act-del">删除</span>
+            <span class="act-edit" @click="openEdit(c)">编辑</span>
+            <span class="act-del" @click="store.removeCred(c.id)">删除</span>
           </span>
         </div>
       </div>
+
+      <div v-else class="empty">
+        <div class="empty-ico">
+          <svg
+            width="26"
+            height="26"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="#5a4a86"
+            stroke-width="1.3"
+            stroke-linecap="round"
+            stroke-linejoin="round">
+            <rect x="3.5" y="7" width="9" height="6" rx="1.2" />
+            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+          </svg>
+        </div>
+        <div class="empty-title">还没有凭据</div>
+        <div class="empty-desc">新增 Cookie、Token 或代理凭据 —— 全部本地 AES-256 加密存储,绝不上传。</div>
+        <button type="button" class="btn-new tall" @click="openCreate">+ 新增凭据</button>
+      </div>
     </div>
+
+    <!-- 新增 / 编辑凭据对话框 -->
+    <DialogRoot v-model:open="dialogOpen">
+      <DialogPortal>
+        <DialogOverlay class="cr-overlay" />
+        <DialogContent class="cr-dialog" @open-auto-focus.prevent>
+          <DialogTitle class="cr-dialog-title">{{ editingId === null ? '新增凭据' : '编辑凭据' }}</DialogTitle>
+          <DialogDescription class="cr-dialog-desc">
+            凭据本地 AES-256 加密存储,明文仅在发起请求时于内存临时解密。
+          </DialogDescription>
+          <div class="cr-field">
+            <label>名称</label>
+            <input v-model="form.name" placeholder="例如 七猫账号 Cookie" />
+          </div>
+          <div class="cr-field">
+            <label>类型</label>
+            <div class="cr-seg">
+              <span :class="{ on: form.type === 'Cookie' }" @click="form.type = 'Cookie'">Cookie</span>
+              <span :class="{ on: form.type === '代理' }" @click="form.type = '代理'">代理</span>
+              <span :class="{ on: form.type === 'Token' }" @click="form.type = 'Token'">Token</span>
+            </div>
+          </div>
+          <div class="cr-field">
+            <label>{{ domainLabel }}</label>
+            <input class="mono" v-model="form.domain" :placeholder="domainPlaceholder" />
+          </div>
+          <div class="cr-field">
+            <label>凭据值</label>
+            <textarea
+              class="mono"
+              v-model="form.secret"
+              rows="3"
+              :placeholder="editingId === null ? '粘贴 Cookie / Token / 代理认证…' : '留空表示保持不变'" />
+          </div>
+          <div class="cr-dialog-foot">
+            <DialogClose class="cr-btn-ghost">取消</DialogClose>
+            <button type="button" class="cr-btn-primary" :disabled="!form.name.trim()" @click="submitCred">
+              {{ editingId === null ? '保存' : '更新' }}
+            </button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </section>
 </template>
 
@@ -310,5 +386,169 @@ const iconStroke = { amber: '#E0A85A', green: '#5dd9b8', mutedred: '#9a6a72' }
 }
 .act-del:hover {
   color: var(--danger);
+}
+
+/* 空态 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 70px 20px;
+}
+.empty-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 15px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.empty-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 360px;
+  margin-bottom: 18px;
+}
+.btn-new.tall {
+  height: 38px;
+}
+</style>
+
+<style>
+/* Reka 弹层 portal 到 body 外,scoped 够不着 → 全局样式(cr- 前缀避免外泄) */
+.cr-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 11, 0.62);
+  z-index: 1000;
+}
+.cr-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #15151d;
+  border: 1px solid #2a2a34;
+  border-radius: 14px;
+  padding: 22px;
+  z-index: 1001;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  line-height: normal;
+}
+.cr-dialog:focus {
+  outline: none;
+}
+.cr-dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cr-dialog-desc {
+  margin: -6px 0 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.cr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cr-field label {
+  font-size: 11.5px;
+  color: #8a8a99;
+}
+.cr-field input,
+.cr-field textarea {
+  background: var(--bg);
+  border: 1px solid #2a2a34;
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: #cdccd8;
+  font-size: 12.5px;
+  outline: none;
+  resize: none;
+}
+.cr-field input:focus,
+.cr-field textarea:focus {
+  border-color: var(--accent);
+}
+.cr-field input::placeholder,
+.cr-field textarea::placeholder {
+  color: #56565f;
+}
+.cr-seg {
+  display: flex;
+  width: fit-content;
+  background: var(--bg);
+  border: 1px solid #2a2a34;
+  border-radius: 8px;
+  padding: 3px;
+}
+.cr-seg span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cr-seg span.on {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+.cr-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+.cr-btn-ghost {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  border: 1px solid #2e2e38;
+  color: #cdccd8;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cr-btn-ghost:hover {
+  border-color: #3a3a46;
+}
+.cr-btn-primary {
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
+}
+.cr-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 </style>

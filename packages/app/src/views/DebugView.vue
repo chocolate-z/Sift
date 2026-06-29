@@ -1,9 +1,51 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuTrigger
+} from 'reka-ui'
+
+const router = useRouter()
 
 type Tab = 'req' | 'resp' | 'parse'
 const alt = ref(false) // false=调试态 · true=初始态(空态)
 const tab = ref<Tab>('resp')
+const keyword = ref('诡秘之主')
+
+// 调试源选择(切换标签;各源的调试场景待 M1 引擎)
+interface DebugSource {
+  name: string
+  type: 'web' | 'api'
+  glyph: string
+  label: string
+}
+const DEFAULT_SOURCE: DebugSource = { name: '旧钢笔文学', type: 'web', glyph: '</>', label: '网页源' }
+const sources: DebugSource[] = [DEFAULT_SOURCE, { name: '七猫中文网', type: 'api', glyph: '{}', label: 'API 源' }]
+const current = ref<DebugSource>(DEFAULT_SOURCE)
+function selectSource(s: DebugSource) {
+  current.value = s
+}
+
+// 开始 / 重新调试:运行采集链路 → 进入调试态(真实逐步执行待 M1 引擎)
+function runDebug() {
+  alt.value = false
+}
+
+// 备选选择器重试为引擎动作,留待 M1;现给瞬时反馈
+const retryFlash = ref(false)
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+function retryAlt() {
+  retryFlash.value = true
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = setTimeout(() => (retryFlash.value = false), 1200)
+}
+onBeforeUnmount(() => {
+  if (retryTimer) clearTimeout(retryTimer)
+})
 
 // 左侧采集链路(调试态)
 const timeline = [
@@ -68,33 +110,53 @@ const upstream = [
       </div>
 
       <div class="ctrl">
-        <div class="src-sel">
-          <span class="type-badge web">
-            <span class="glyph mono">&lt;/&gt;</span>
-            网页源
-          </span>
-          <span class="src-name">旧钢笔文学</span>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="#6a6a76"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </div>
+        <DropdownMenuRoot>
+          <DropdownMenuTrigger as-child>
+            <div class="src-sel">
+              <span class="type-badge" :class="current.type">
+                <span class="glyph mono">{{ current.glyph }}</span>
+                {{ current.label }}
+              </span>
+              <span class="src-name">{{ current.name }}</span>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="#6a6a76"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuContent class="db-menu" align="start" :side-offset="6">
+              <DropdownMenuItem
+                v-for="s in sources"
+                :key="s.name"
+                class="db-menu-item"
+                :class="{ active: current.name === s.name }"
+                @select="selectSource(s)">
+                <span class="db-badge" :class="s.type">
+                  <span class="mono">{{ s.glyph }}</span>
+                  {{ s.label }}
+                </span>
+                {{ s.name }}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenuPortal>
+        </DropdownMenuRoot>
         <div class="kw">
           <span class="kw-label">关键词</span>
-          <input class="mono" value="诡秘之主" />
+          <input class="mono" v-model="keyword" />
         </div>
-        <button type="button" class="run">
+        <button type="button" class="run" @click="runDebug">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="#fff"><path d="M4 3l9 5-9 5z" /></svg>
           开始调试
         </button>
-        <button type="button" class="refresh" aria-label="重新调试">
+        <button type="button" class="refresh" aria-label="重新调试" @click="runDebug">
           <svg
             width="15"
             height="15"
@@ -329,8 +391,10 @@ const upstream = [
               <span v-for="c in upstream" :key="c.t" class="up-chip mono" :class="c.kind">{{ c.t }}</span>
             </div>
             <div class="parse-actions">
-              <button type="button" class="btn-primary sm">用备选选择器重试</button>
-              <button type="button" class="btn-soft">编辑正文规则</button>
+              <button type="button" class="btn-primary sm" @click="retryAlt">
+                {{ retryFlash ? '重试中…' : '用备选选择器重试' }}
+              </button>
+              <button type="button" class="btn-soft" @click="router.push('/import')">编辑正文规则</button>
             </div>
           </div>
         </div>
@@ -436,6 +500,10 @@ const upstream = [
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 0 12px;
+  cursor: pointer;
+}
+.src-sel:hover {
+  border-color: #33333f;
 }
 .type-badge {
   display: inline-flex;
@@ -450,6 +518,11 @@ const upstream = [
   background: rgba(224, 168, 90, 0.12);
   border: 1px solid rgba(224, 168, 90, 0.35);
   color: var(--warning);
+}
+.type-badge.api {
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.4);
+  color: var(--success);
 }
 .type-badge .glyph {
   font-weight: 700;
@@ -1086,5 +1159,59 @@ const upstream = [
   color: var(--text-secondary);
   line-height: 1.6;
   max-width: 320px;
+}
+</style>
+
+<style>
+/* Reka 下拉 portal 到 body 外,scoped 够不着 → 全局样式(db- 前缀避免外泄) */
+.db-menu {
+  min-width: 200px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.db-menu:focus {
+  outline: none;
+}
+.db-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.db-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.db-menu-item.active {
+  color: var(--accent-text);
+}
+.db-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.db-badge.web {
+  background: rgba(224, 168, 90, 0.12);
+  border: 1px solid rgba(224, 168, 90, 0.35);
+  color: var(--warning);
+}
+.db-badge.api {
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.4);
+  color: var(--success);
 }
 </style>

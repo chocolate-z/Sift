@@ -1,70 +1,99 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from 'reka-ui'
+import { useTasksStore, type Task, type TaskType } from '@/stores/tasks'
 
 const router = useRouter()
-const alt = ref(false)
+const store = useTasksStore()
 
-interface Task {
-  name: string
-  type: 'pick' | 'api' | 'web'
-  url: string
-  fields: string
-  lastRun: string
-  result: string
-  resultFail?: boolean
-  status: 'ready' | 'running' | 'failed'
-  action: 'run' | 'pause' | 'debug'
+const searchText = ref('')
+const filterType = ref<'all' | 'pick' | 'rule'>('all')
+const sortBy = ref<'recent' | 'name' | 'result'>('recent')
+const sortLabel = computed(() => ({ recent: '最近运行', name: '名称', result: '结果数' })[sortBy.value])
+
+function resultNum(t: Task): number {
+  const m = t.result.match(/\d+/)
+  return m ? Number(m[0]) : 0
 }
-const tasks: Task[] = [
-  {
-    name: '书城商品列表',
-    type: 'pick',
-    url: 'book.example.com/list?cat=novel',
-    fields: '3',
-    lastRun: '2 小时前',
-    result: '5 条',
-    status: 'ready',
-    action: 'run'
-  },
-  {
-    name: '七猫 · 诡秘之主',
-    type: 'api',
-    url: 'www.qimao.com',
-    fields: '5',
-    lastRun: '12 分钟前',
-    result: '1083 章',
-    status: 'running',
-    action: 'pause'
-  },
-  {
-    name: '旧钢笔 · 全本抓取',
-    type: 'web',
-    url: 'www.jiugangbi.com',
-    fields: '4',
-    lastRun: '1 小时前',
-    result: '正文为空',
-    resultFail: true,
-    status: 'failed',
-    action: 'debug'
-  },
-  {
-    name: '当当图书榜',
-    type: 'pick',
-    url: 'book.dangdang.com/bestseller',
-    fields: '4',
-    lastRun: '昨天',
-    result: '50 条',
-    status: 'ready',
-    action: 'run'
-  }
-]
+const filteredTasks = computed(() => {
+  let list = store.tasks
+  if (filterType.value === 'pick') list = list.filter((t) => t.type === 'pick')
+  else if (filterType.value === 'rule') list = list.filter((t) => t.type === 'api' || t.type === 'web')
+  const q = searchText.value.trim().toLowerCase()
+  if (q) list = list.filter((t) => t.name.toLowerCase().includes(q) || t.url.toLowerCase().includes(q))
+  if (sortBy.value === 'name') return [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  if (sortBy.value === 'result') return [...list].sort((a, b) => resultNum(b) - resultNum(a))
+  return list
+})
+
 const statusLabel = { ready: '就绪', running: '运行中', failed: '失败' }
-const actionLabel = { run: '运行', pause: '暂停', debug: '调试' }
 const typeMeta = {
   pick: { label: '点选', glyph: '' },
   api: { label: 'API 源', glyph: '{}' },
   web: { label: '网页源', glyph: '</>' }
+}
+
+// 新建 / 编辑对话框
+const dialogOpen = ref(false)
+const editingId = ref<number | null>(null)
+const form = reactive<{ name: string; type: TaskType; url: string; fields: string }>({
+  name: '',
+  type: 'pick',
+  url: '',
+  fields: '3'
+})
+function openCreate() {
+  editingId.value = null
+  form.name = ''
+  form.type = 'pick'
+  form.url = ''
+  form.fields = '3'
+  dialogOpen.value = true
+}
+function openEdit(t: Task) {
+  editingId.value = t.id
+  form.name = t.name
+  form.type = t.type
+  form.url = t.url
+  form.fields = t.fields
+  dialogOpen.value = true
+}
+function submitTask() {
+  if (!form.name.trim()) return
+  if (editingId.value === null) {
+    store.addTask({
+      name: form.name.trim(),
+      type: form.type,
+      url: form.url.trim(),
+      fields: form.fields || '0',
+      lastRun: '从未运行',
+      result: '—',
+      status: 'ready'
+    })
+  } else {
+    store.updateTask(editingId.value, {
+      name: form.name.trim(),
+      type: form.type,
+      url: form.url.trim(),
+      fields: form.fields || '0'
+    })
+  }
+  dialogOpen.value = false
 }
 </script>
 
@@ -79,40 +108,59 @@ const typeMeta = {
             <circle cx="7" cy="7" r="4.5" />
             <path d="M10.5 10.5L14 14" />
           </svg>
-          <input class="mono" placeholder="搜索任务名 / 站点…" />
+          <input class="mono" placeholder="搜索任务名 / 站点…" v-model="searchText" />
         </div>
         <div class="filter">
-          <span class="on">全部</span>
-          <span>点选</span>
-          <span>规则</span>
+          <span :class="{ on: filterType === 'all' }" @click="filterType = 'all'">全部</span>
+          <span :class="{ on: filterType === 'pick' }" @click="filterType = 'pick'">点选</span>
+          <span :class="{ on: filterType === 'rule' }" @click="filterType = 'rule'">规则</span>
         </div>
-        <div class="sort">
-          最近运行
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="#6a6a76"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </div>
+        <DropdownMenuRoot>
+          <DropdownMenuTrigger as-child>
+            <div class="sort">
+              {{ sortLabel }}
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="#6a6a76"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuContent class="tl-menu" align="start" :side-offset="6">
+              <DropdownMenuItem
+                class="tl-menu-item"
+                :class="{ active: sortBy === 'recent' }"
+                @select="sortBy = 'recent'">
+                最近运行
+              </DropdownMenuItem>
+              <DropdownMenuItem class="tl-menu-item" :class="{ active: sortBy === 'name' }" @select="sortBy = 'name'">
+                名称
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="tl-menu-item"
+                :class="{ active: sortBy === 'result' }"
+                @select="sortBy = 'result'">
+                结果数
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenuPortal>
+        </DropdownMenuRoot>
         <div class="tb-right">
-          <div class="seg">
-            <span :class="{ on: !alt }" @click="alt = false">有数据</span>
-            <span :class="{ on: alt }" @click="alt = true">空态</span>
-          </div>
-          <button type="button" class="btn-new">+ 新建任务</button>
+          <button type="button" class="btn-new" @click="openCreate">+ 新建任务</button>
         </div>
       </div>
     </header>
 
     <div class="body">
-      <div v-if="!alt" class="list">
-        <div v-for="t in tasks" :key="t.name" class="task-row" @click="router.push('/data')">
+      <div v-if="filteredTasks.length" class="list">
+        <div v-for="t in filteredTasks" :key="t.id" class="task-row" @click="router.push('/data')">
           <div class="tr-main">
             <div class="tr-title">
               <span class="tr-name">{{ t.name }}</span>
@@ -148,13 +196,27 @@ const typeMeta = {
           </span>
 
           <div class="tr-actions" @click.stop>
-            <button v-if="t.action === 'run'" type="button" class="act-run">{{ actionLabel[t.action] }}</button>
-            <button v-else-if="t.action === 'pause'" type="button" class="act-soft">{{ actionLabel[t.action] }}</button>
-            <button v-else type="button" class="act-debug" @click="router.push('/debug')">
-              {{ actionLabel[t.action] }}
+            <button v-if="t.status === 'ready'" type="button" class="act-run" @click="store.toggleRun(t.id)">
+              运行
             </button>
-            <span class="act-edit">编辑</span>
-            <span class="act-more">⋯</span>
+            <button v-else-if="t.status === 'running'" type="button" class="act-soft" @click="store.toggleRun(t.id)">
+              暂停
+            </button>
+            <button v-else type="button" class="act-debug" @click="router.push('/debug')">调试</button>
+            <span class="act-edit" @click="openEdit(t)">编辑</span>
+            <DropdownMenuRoot>
+              <DropdownMenuTrigger as-child>
+                <span class="act-more">⋯</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuContent class="tl-menu" align="end" :side-offset="6">
+                  <DropdownMenuItem class="tl-menu-item" @select="router.push('/data')">查看数据</DropdownMenuItem>
+                  <DropdownMenuItem class="tl-menu-item" @select="store.duplicateTask(t.id)">复制任务</DropdownMenuItem>
+                  <DropdownMenuSeparator class="tl-menu-sep" />
+                  <DropdownMenuItem class="tl-menu-item danger" @select="store.removeTask(t.id)">删除</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenuPortal>
+            </DropdownMenuRoot>
           </div>
         </div>
       </div>
@@ -173,7 +235,7 @@ const typeMeta = {
             <path d="M3 4h10M3 8h10M3 12h7" />
           </svg>
         </div>
-        <div class="empty-title">还没有任务</div>
+        <div class="empty-title">{{ searchText.trim() || filterType !== 'all' ? '没有匹配的任务' : '还没有任务' }}</div>
         <div class="empty-desc">从点选采集像圈图一样选取字段,或粘贴第三方规则导入 —— 都会出现在这里。</div>
         <div class="empty-actions">
           <button type="button" class="btn-new tall" @click="router.push('/pick')">去点选采集</button>
@@ -181,6 +243,45 @@ const typeMeta = {
         </div>
       </div>
     </div>
+
+    <!-- 新建 / 编辑任务对话框 -->
+    <DialogRoot v-model:open="dialogOpen">
+      <DialogPortal>
+        <DialogOverlay class="tl-overlay" />
+        <DialogContent class="tl-dialog" @open-auto-focus.prevent>
+          <DialogTitle class="tl-dialog-title">{{ editingId === null ? '新建任务' : '编辑任务' }}</DialogTitle>
+          <DialogDescription class="tl-dialog-desc">
+            配置采集任务的基础信息,请求头与限速可稍后在请求配置中补充。
+          </DialogDescription>
+          <div class="tl-field">
+            <label>任务名称</label>
+            <input v-model="form.name" placeholder="例如 七猫 · 诡秘之主" />
+          </div>
+          <div class="tl-field">
+            <label>类型</label>
+            <div class="tl-seg">
+              <span :class="{ on: form.type === 'pick' }" @click="form.type = 'pick'">点选</span>
+              <span :class="{ on: form.type === 'api' }" @click="form.type = 'api'">API 源</span>
+              <span :class="{ on: form.type === 'web' }" @click="form.type = 'web'">网页源</span>
+            </div>
+          </div>
+          <div class="tl-field">
+            <label>站点 URL</label>
+            <input class="mono" v-model="form.url" placeholder="www.example.com" />
+          </div>
+          <div class="tl-field">
+            <label>字段数</label>
+            <input class="mono" v-model="form.fields" placeholder="3" />
+          </div>
+          <div class="tl-dialog-foot">
+            <DialogClose class="tl-btn-ghost">取消</DialogClose>
+            <button type="button" class="tl-btn-primary" :disabled="!form.name.trim()" @click="submitTask">
+              {{ editingId === null ? '创建' : '保存' }}
+            </button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </section>
 </template>
 
@@ -269,36 +370,14 @@ const typeMeta = {
   color: #9a9aa6;
   cursor: pointer;
 }
+.sort:hover {
+  border-color: #33333f;
+}
 .tb-right {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.seg {
-  display: flex;
-  height: 34px;
-  padding: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.seg span {
-  display: flex;
-  align-items: center;
-  padding: 0 11px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.seg span.on:first-child {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-}
-.seg span.on:last-child {
-  color: #cdccd8;
-  background: var(--bg-elevated);
 }
 .btn-new {
   height: 36px;
@@ -544,5 +623,170 @@ const typeMeta = {
 }
 .btn-ghost:hover {
   border-color: #3a3a46;
+}
+</style>
+
+<style>
+/* Reka 弹层 portal 到 body 外,scoped 够不着 → 全局样式(tl- 前缀避免外泄) */
+.tl-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 11, 0.62);
+  z-index: 1000;
+}
+.tl-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #15151d;
+  border: 1px solid #2a2a34;
+  border-radius: 14px;
+  padding: 22px;
+  z-index: 1001;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  line-height: normal;
+}
+.tl-dialog:focus {
+  outline: none;
+}
+.tl-dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.tl-dialog-desc {
+  margin: -6px 0 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.tl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tl-field label {
+  font-size: 11.5px;
+  color: #8a8a99;
+}
+.tl-field input {
+  background: var(--bg);
+  border: 1px solid #2a2a34;
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: #cdccd8;
+  font-size: 12.5px;
+  outline: none;
+}
+.tl-field input:focus {
+  border-color: var(--accent);
+}
+.tl-field input::placeholder {
+  color: #56565f;
+}
+.tl-seg {
+  display: flex;
+  width: fit-content;
+  background: var(--bg);
+  border: 1px solid #2a2a34;
+  border-radius: 8px;
+  padding: 3px;
+}
+.tl-seg span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tl-seg span.on {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+.tl-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+.tl-btn-ghost {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  border: 1px solid #2e2e38;
+  color: #cdccd8;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tl-btn-ghost:hover {
+  border-color: #3a3a46;
+}
+.tl-btn-primary {
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
+}
+.tl-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.tl-menu {
+  min-width: 168px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.tl-menu:focus {
+  outline: none;
+}
+.tl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.tl-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.tl-menu-item.active {
+  color: var(--accent-text);
+}
+.tl-menu-item.danger {
+  color: #e0908b;
+}
+.tl-menu-item.danger[data-highlighted] {
+  background: rgba(224, 68, 62, 0.16);
+  color: #f1837d;
+}
+.tl-menu-sep {
+  height: 1px;
+  margin: 4px;
+  background: #24242e;
 }
 </style>

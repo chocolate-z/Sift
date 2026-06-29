@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 
-const advOpen = ref(false) // 高级设置(代理/认证)默认折叠
+let uid = 0
+const mkId = () => ++uid
 
 // 请求头;lock 类型=加密凭据,只读掩码
-const headers = [
+interface HeaderRow {
+  id: number
+  key: string
+  type: 'text' | 'lock'
+  value?: string
+  masked?: string
+  note?: string
+}
+const DEFAULT_HEADERS: Omit<HeaderRow, 'id'>[] = [
   { key: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', type: 'text' },
   { key: 'Referer', value: 'https://www.qimao.com/', type: 'text' },
   { key: 'Cookie', masked: '•••••••••••••••••••••••', note: '来自 Cookie 区', type: 'lock' },
@@ -12,10 +21,156 @@ const headers = [
 ]
 
 // Cookie 按域名隔离,本地加密
-const cookieGroups = [
-  { domain: 'www.qimao.com', keys: 3, value: 'u_id=•••••••••; sajssdk=••••••••••••••; token=••••••' },
-  { domain: 'www.jiugangbi.com', keys: 1, value: 'PHPSESSID=••••••••••••••••••••••••' }
+interface CookieGroup {
+  id: number
+  domain: string
+  value: string
+  plain: string
+  keys: number
+  revealed: boolean
+  editable: boolean
+}
+const DEFAULT_COOKIES: Omit<CookieGroup, 'id' | 'revealed' | 'editable'>[] = [
+  {
+    domain: 'www.qimao.com',
+    value: 'u_id=•••••••••; sajssdk=••••••••••••••; token=••••••',
+    plain: 'u_id=884213097; sajssdk=9f8a7b6c5d4e3f; token=a1b2c3d4',
+    keys: 3
+  },
+  {
+    domain: 'www.jiugangbi.com',
+    value: 'PHPSESSID=••••••••••••••••••••••••',
+    plain: 'PHPSESSID=k3j9d8s7a6f5g4h3j2k1l0p9',
+    keys: 1
+  }
 ]
+
+interface ProxyCfg {
+  enabled: boolean
+  type: 'http' | 'socks5'
+  host: string
+  port: string
+  user: string
+  pass: string
+}
+const makeProxy = (): ProxyCfg => ({ enabled: true, type: 'http', host: '127.0.0.1', port: '7890', user: '', pass: '' })
+
+const cloneHeaders = (): HeaderRow[] => DEFAULT_HEADERS.map((h) => ({ id: mkId(), ...h }))
+const cloneCookies = (): CookieGroup[] =>
+  DEFAULT_COOKIES.map((c) => ({ id: mkId(), revealed: false, editable: false, ...c }))
+
+const headers = ref<HeaderRow[]>(cloneHeaders())
+const cookieGroups = ref<CookieGroup[]>(cloneCookies())
+const proxy = ref<ProxyCfg>(makeProxy())
+const advOpen = ref(false)
+const concurrency = ref(2)
+const interval = ref(800)
+const intervalEnabled = ref(true)
+const timeout = ref('6000ms')
+const retry = ref('2')
+
+function addHeader() {
+  headers.value.push({ id: mkId(), key: '', value: '', type: 'text' })
+}
+function removeHeader(i: number) {
+  headers.value.splice(i, 1)
+}
+function addCookie() {
+  cookieGroups.value.push({ id: mkId(), domain: '', value: '', plain: '', keys: 0, revealed: true, editable: true })
+}
+function removeCookie(i: number) {
+  cookieGroups.value.splice(i, 1)
+}
+function groupKeys(g: CookieGroup): number {
+  if (!g.editable) return g.keys
+  return g.plain
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.includes('=')).length
+}
+
+// 限速并发滑块
+interface SliderOpts {
+  get: () => number
+  set: (v: number) => void
+  min: number
+  max: number
+  step: number
+}
+const concurrencyOpts: SliderOpts = {
+  get: () => concurrency.value,
+  set: (v) => (concurrency.value = v),
+  min: 1,
+  max: 8,
+  step: 1
+}
+const intervalOpts: SliderOpts = {
+  get: () => interval.value,
+  set: (v) => (interval.value = v),
+  min: 0,
+  max: 2000,
+  step: 50
+}
+const fillPct = (v: number, o: SliderOpts) => ((v - o.min) / (o.max - o.min)) * 100
+const concFill = computed(() => fillPct(concurrency.value, concurrencyOpts))
+const intervalFill = computed(() => fillPct(interval.value, intervalOpts))
+
+function clampStep(raw: number, o: SliderOpts): number {
+  const stepped = Math.round(raw / o.step) * o.step
+  return Math.min(o.max, Math.max(o.min, stepped))
+}
+function dragSlider(e: PointerEvent, o: SliderOpts) {
+  const track = e.currentTarget as HTMLElement
+  const rect = track.getBoundingClientRect()
+  const apply = (x: number) => {
+    const f = Math.min(1, Math.max(0, (x - rect.left) / rect.width))
+    o.set(clampStep(o.min + f * (o.max - o.min), o))
+  }
+  apply(e.clientX)
+  const move = (ev: PointerEvent) => apply(ev.clientX)
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+}
+function keySlider(e: KeyboardEvent, o: SliderOpts) {
+  let delta = 0
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') delta = -o.step
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') delta = o.step
+  else if (e.key === 'Home') {
+    e.preventDefault()
+    return o.set(o.min)
+  } else if (e.key === 'End') {
+    e.preventDefault()
+    return o.set(o.max)
+  } else return
+  e.preventDefault()
+  o.set(clampStep(o.get() + delta, o))
+}
+
+// 底部动作
+const saved = ref(false)
+let savedTimer: ReturnType<typeof setTimeout> | undefined
+function resetDefaults() {
+  headers.value = cloneHeaders()
+  cookieGroups.value = cloneCookies()
+  proxy.value = makeProxy()
+  concurrency.value = 2
+  interval.value = 800
+  intervalEnabled.value = true
+  timeout.value = '6000ms'
+  retry.value = '2'
+}
+function saveConfig() {
+  saved.value = true
+  if (savedTimer) clearTimeout(savedTimer)
+  savedTimer = setTimeout(() => (saved.value = false), 1500)
+}
+onBeforeUnmount(() => {
+  if (savedTimer) clearTimeout(savedTimer)
+})
 </script>
 
 <template>
@@ -55,13 +210,13 @@ const cookieGroups = [
         <div class="panel">
           <div class="card-head">
             <span class="card-title">请求头</span>
-            <span class="count mono">4</span>
+            <span class="count mono">{{ headers.length }}</span>
             <span class="card-note">对所有请求生效</span>
           </div>
           <div class="card-body gap8">
-            <div v-for="h in headers" :key="h.key" class="hrow">
-              <input class="hkey mono" :value="h.key" />
-              <input v-if="h.type === 'text'" class="hval mono" :value="h.value" />
+            <div v-for="(h, i) in headers" :key="h.id" class="hrow">
+              <input class="hkey mono" v-model="h.key" />
+              <input v-if="h.type === 'text'" class="hval mono" v-model="h.value" />
               <div v-else class="hlock">
                 <svg
                   width="12"
@@ -77,7 +232,7 @@ const cookieGroups = [
                 <span class="hmask mono">{{ h.masked }}</span>
                 <span v-if="h.note" class="hnote">{{ h.note }}</span>
               </div>
-              <span class="del">
+              <span class="del" @click="removeHeader(i)">
                 <svg
                   width="14"
                   height="14"
@@ -90,7 +245,7 @@ const cookieGroups = [
                 </svg>
               </span>
             </div>
-            <button type="button" class="add-dashed">+ 添加请求头</button>
+            <button type="button" class="add-dashed" @click="addHeader">+ 添加请求头</button>
           </div>
         </div>
 
@@ -102,17 +257,22 @@ const cookieGroups = [
               <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
             </svg>
             <span class="card-title">Cookie</span>
-            <span class="count mono">2 组</span>
+            <span class="count mono">{{ cookieGroups.length }} 组</span>
             <span class="card-note">按域名隔离</span>
           </div>
           <div class="card-body gap10">
-            <div v-for="g in cookieGroups" :key="g.domain" class="ck-group">
+            <div v-for="(g, i) in cookieGroups" :key="g.id" class="ck-group">
               <div class="ck-top">
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#5dd9b8" stroke-width="1.5">
                   <rect x="3.5" y="7" width="9" height="6" rx="1.2" />
                   <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
                 </svg>
-                <span class="ck-domain mono">{{ g.domain }}</span>
+                <input
+                  v-if="g.editable"
+                  class="ck-domain-inp mono"
+                  v-model="g.domain"
+                  placeholder="域名,如 www.example.com" />
+                <span v-else class="ck-domain mono">{{ g.domain }}</span>
                 <span class="enc-tag">
                   <svg
                     width="9"
@@ -127,19 +287,26 @@ const cookieGroups = [
                   </svg>
                   已加密
                 </span>
-                <span class="ck-keys">{{ g.keys }} 个键</span>
+                <span class="ck-keys">{{ groupKeys(g) }} 个键</span>
+                <span v-if="g.editable" class="ck-del" @click="removeCookie(i)">×</span>
               </div>
               <div class="ck-val">
-                <span class="ckv-mask mono">{{ g.value }}</span>
-                <span class="eye">
+                <input
+                  v-if="g.editable"
+                  class="ckv-inp mono"
+                  v-model="g.plain"
+                  placeholder="粘贴 Cookie 字符串,如 key=value; key2=value2" />
+                <span v-else class="ckv-mask mono">{{ g.revealed ? g.plain : g.value }}</span>
+                <span v-if="!g.editable" class="eye" @click="g.revealed = !g.revealed">
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
                     <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
                     <circle cx="8" cy="8" r="2" />
+                    <path v-if="g.revealed" d="M2.5 2.5l11 11" />
                   </svg>
                 </span>
               </div>
             </div>
-            <button type="button" class="add-dashed">+ 添加 Cookie 组</button>
+            <button type="button" class="add-dashed" @click="addCookie">+ 添加 Cookie 组</button>
           </div>
         </div>
 
@@ -168,31 +335,31 @@ const cookieGroups = [
           <div class="card-head">
             <span class="card-title">代理</span>
             <span class="proxy-toggle">
-              <span class="pt-label">已启用</span>
-              <span class="toggle on"><i /></span>
+              <span class="pt-label" :class="{ off: !proxy.enabled }">{{ proxy.enabled ? '已启用' : '已禁用' }}</span>
+              <span class="toggle" :class="{ on: proxy.enabled }" @click="proxy.enabled = !proxy.enabled"><i /></span>
             </span>
           </div>
-          <div class="proxy-body">
+          <div class="proxy-body" :class="{ disabled: !proxy.enabled }">
             <div class="field">
               <span class="field-label">类型</span>
               <div class="seg">
-                <span class="on">HTTP</span>
-                <span>SOCKS5</span>
+                <span :class="{ on: proxy.type === 'http' }" @click="proxy.type = 'http'">HTTP</span>
+                <span :class="{ on: proxy.type === 'socks5' }" @click="proxy.type = 'socks5'">SOCKS5</span>
               </div>
             </div>
             <div class="field grow">
               <span class="field-label">地址</span>
-              <input class="inp mono" value="127.0.0.1" />
+              <input class="inp mono" v-model="proxy.host" />
             </div>
             <div class="field w100">
               <span class="field-label">端口</span>
-              <input class="inp mono" value="7890" />
+              <input class="inp mono" v-model="proxy.port" />
             </div>
             <div class="field grow2">
               <span class="field-label">认证(可选)</span>
               <div class="auth-row">
-                <input class="inp mono" placeholder="用户名" />
-                <input class="inp mono" type="password" placeholder="密码" />
+                <input class="inp mono" placeholder="用户名" v-model="proxy.user" />
+                <input class="inp mono" type="password" placeholder="密码" v-model="proxy.pass" />
               </div>
             </div>
           </div>
@@ -221,11 +388,20 @@ const cookieGroups = [
             <div>
               <div class="slider-head">
                 <span class="sl-label">并发数</span>
-                <span class="sl-val mono">2</span>
+                <span class="sl-val mono">{{ concurrency }}</span>
               </div>
-              <div class="slider">
-                <div class="sl-fill" style="width: 25%" />
-                <div class="sl-thumb" style="left: calc(25% - 7px)" />
+              <div
+                class="slider"
+                role="slider"
+                tabindex="0"
+                :aria-valuemin="concurrencyOpts.min"
+                :aria-valuemax="concurrencyOpts.max"
+                :aria-valuenow="concurrency"
+                aria-label="并发数"
+                @pointerdown="dragSlider($event, concurrencyOpts)"
+                @keydown="keySlider($event, concurrencyOpts)">
+                <div class="sl-fill" :style="{ width: concFill + '%' }" />
+                <div class="sl-thumb" :style="{ left: `calc(${concFill}% - 7px)` }" />
               </div>
               <div class="sl-scale">
                 <span>1</span>
@@ -236,13 +412,24 @@ const cookieGroups = [
               <div class="slider-head">
                 <span class="sl-label">请求间隔</span>
                 <span class="sl-right">
-                  <span class="sl-val mono">800ms</span>
-                  <span class="toggle on sm"><i /></span>
+                  <span class="sl-val mono">{{ interval }}ms</span>
+                  <span class="toggle sm" :class="{ on: intervalEnabled }" @click="intervalEnabled = !intervalEnabled">
+                    <i />
+                  </span>
                 </span>
               </div>
-              <div class="slider">
-                <div class="sl-fill" style="width: 40%" />
-                <div class="sl-thumb" style="left: calc(40% - 7px)" />
+              <div
+                class="slider"
+                role="slider"
+                tabindex="0"
+                :aria-valuemin="intervalOpts.min"
+                :aria-valuemax="intervalOpts.max"
+                :aria-valuenow="interval"
+                aria-label="请求间隔(毫秒)"
+                @pointerdown="dragSlider($event, intervalOpts)"
+                @keydown="keySlider($event, intervalOpts)">
+                <div class="sl-fill" :style="{ width: intervalFill + '%' }" />
+                <div class="sl-thumb" :style="{ left: `calc(${intervalFill}% - 7px)` }" />
               </div>
               <div class="sl-scale">
                 <span>0</span>
@@ -251,19 +438,19 @@ const cookieGroups = [
             </div>
             <div class="field">
               <span class="sl-label">超时</span>
-              <input class="inp mono" value="6000ms" />
+              <input class="inp mono" v-model="timeout" />
             </div>
             <div class="field">
               <span class="sl-label">重试次数</span>
-              <input class="inp mono" value="2" />
+              <input class="inp mono" v-model="retry" />
             </div>
           </div>
         </div>
 
         <!-- 底部动作 -->
         <div class="foot">
-          <button type="button" class="btn-soft">恢复默认</button>
-          <button type="button" class="btn-primary">保存配置</button>
+          <button type="button" class="btn-soft" @click="resetDefaults">恢复默认</button>
+          <button type="button" class="btn-primary" @click="saveConfig">{{ saved ? '已保存 ✓' : '保存配置' }}</button>
         </div>
       </div>
     </div>
@@ -401,6 +588,11 @@ const cookieGroups = [
   outline: none;
   text-overflow: ellipsis;
 }
+.hkey:focus,
+.hval:focus,
+.inp:focus {
+  border-color: var(--accent);
+}
 .hlock {
   flex: 1;
   min-width: 0;
@@ -470,6 +662,17 @@ const cookieGroups = [
   font-size: 12px;
   color: var(--text);
 }
+.ck-domain-inp {
+  width: 220px;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.ck-domain-inp::placeholder {
+  color: #56565f;
+}
 .enc-tag {
   display: flex;
   align-items: center;
@@ -486,6 +689,17 @@ const cookieGroups = [
   font-size: 11px;
   color: #7a7a87;
 }
+.ck-del {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.ck-del:hover {
+  color: var(--danger);
+}
 .ck-val {
   display: flex;
   align-items: center;
@@ -500,6 +714,19 @@ const cookieGroups = [
   font-size: 11.5px;
   color: #8a86a6;
   letter-spacing: 1px;
+}
+.ckv-inp {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 11.5px;
+  color: #cdccd8;
+}
+.ckv-inp::placeholder {
+  color: #56565f;
+  letter-spacing: 0;
 }
 .eye {
   flex: none;
@@ -548,23 +775,35 @@ const cookieGroups = [
   font-size: 11.5px;
   color: var(--accent-text);
 }
+.pt-label.off {
+  color: var(--text-secondary);
+}
 .toggle {
   width: 30px;
   height: 17px;
   border-radius: 9px;
-  background: var(--accent);
+  background: #3a3a46;
   position: relative;
   flex: none;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 .toggle i {
   position: absolute;
   top: 2px;
-  left: 15px;
+  left: 2px;
   width: 13px;
   height: 13px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: left 0.15s;
+}
+.toggle.on {
+  background: var(--accent);
+}
+.toggle.on i {
+  left: 15px;
 }
 .toggle.sm {
   width: 28px;
@@ -572,10 +811,13 @@ const cookieGroups = [
 }
 .toggle.sm i {
   top: 2px;
-  left: 14px;
+  left: 2px;
   width: 12px;
   height: 12px;
   box-shadow: none;
+}
+.toggle.sm.on i {
+  left: 14px;
 }
 .proxy-body {
   display: flex;
@@ -583,6 +825,9 @@ const cookieGroups = [
   flex-wrap: wrap;
   align-items: flex-end;
   padding: 14px 16px;
+}
+.proxy-body.disabled {
+  opacity: 0.5;
 }
 .field {
   display: flex;
@@ -679,6 +924,16 @@ const cookieGroups = [
   height: 5px;
   background: var(--border);
   border-radius: 3px;
+  cursor: pointer;
+  touch-action: none;
+}
+.slider:focus-visible {
+  outline: none;
+}
+.slider:focus-visible .sl-thumb {
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.5),
+    0 0 0 4px rgba(124, 92, 252, 0.3);
 }
 .sl-fill {
   position: absolute;

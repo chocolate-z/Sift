@@ -1,18 +1,35 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref } from 'vue'
 import { ChevronDown, Pencil, Search, TriangleAlert } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuTrigger
+} from 'reka-ui'
+import { useTasksStore } from '@/stores/tasks'
 
 const router = useRouter()
+const tasks = useTasksStore()
+
+const pickMode = ref(true)
+const pickedTitle = ref('大奉打更人')
+const page = ref(1)
+const url = ref('https://book.example.com/list?cat=novel')
 
 const books = [
   { title: '剑来', price: '¥39.00' },
-  { title: '大奉打更人', price: '¥28.00', picked: true },
+  { title: '大奉打更人', price: '¥28.00' },
   { title: '诡秘之主', price: '¥45.00' },
   { title: '凡人修仙传', price: '¥32.00' },
   { title: '三体', price: '¥35.00' }
 ]
 
+let uid = 0
 interface Field {
+  id: number
   name: string
   selector: string
   type: string
@@ -22,8 +39,11 @@ interface Field {
   dot: string
   lazy?: boolean
 }
-const fields: Field[] = [
+const TYPE_OPTS = ['文本', '数字', '图片', '链接']
+const ATTR_OPTS = ['文本', '@href', '@src', '@data-src']
+const fields = ref<Field[]>([
   {
+    id: ++uid,
     name: '标题',
     selector: '.product-card .title',
     type: '文本',
@@ -33,6 +53,7 @@ const fields: Field[] = [
     dot: 'var(--accent)'
   },
   {
+    id: ++uid,
     name: '价格',
     selector: '.product-card .price',
     type: '数字',
@@ -42,6 +63,7 @@ const fields: Field[] = [
     dot: '#2dd4bf'
   },
   {
+    id: ++uid,
     name: '封面图',
     selector: '.product-card img',
     type: '图片',
@@ -51,7 +73,56 @@ const fields: Field[] = [
     dot: 'var(--accent)',
     lazy: true
   }
-]
+])
+function pickCard(title: string) {
+  if (pickMode.value) pickedTitle.value = title
+}
+function addField() {
+  fields.value.push({
+    id: ++uid,
+    name: '新字段',
+    selector: '.product-card .field',
+    type: '文本',
+    robust: 3,
+    robustLabel: '良好',
+    attr: '文本',
+    dot: 'var(--accent)'
+  })
+}
+function removeField(id: number) {
+  const i = fields.value.findIndex((f) => f.id === id)
+  if (i >= 0) fields.value.splice(i, 1)
+}
+function focusSelector(e: MouseEvent) {
+  ;(e.currentTarget as HTMLElement)?.parentElement?.querySelector('input')?.focus()
+}
+
+// 加载 / 完成 / 保存为任务 —— 部分动作待引擎,现给瞬时反馈
+const flash = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function showFlash(key: string) {
+  flash.value = key
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flash.value = null), 1300)
+}
+function saveAsTask() {
+  tasks.addTask({
+    name: '书城商品列表',
+    type: 'pick',
+    url: 'book.example.com/list?cat=novel',
+    fields: String(fields.value.length),
+    lastRun: '从未运行',
+    result: '—',
+    status: 'ready'
+  })
+  showFlash('save')
+}
+function addPageRule() {
+  showFlash('page')
+}
+onBeforeUnmount(() => {
+  if (flashTimer) clearTimeout(flashTimer)
+})
 </script>
 
 <template>
@@ -67,18 +138,19 @@ const fields: Field[] = [
     <div class="urlbar">
       <div class="url-input">
         <Search :size="15" class="ico" />
-        <span class="mono">https://book.example.com/list?cat=novel</span>
+        <input class="url-field mono" v-model="url" spellcheck="false" placeholder="输入网址后点「打开」加载页面…" />
       </div>
       <span class="chip ok">
         <i class="dot ok" />
         已加载
       </span>
-      <button type="button" class="btn ghost">打开</button>
-      <button type="button" class="btn">完成</button>
-      <span class="muted">加载中</span>
+      <button type="button" class="btn ghost" @click="showFlash('open')">
+        {{ flash === 'open' ? '加载中…' : '打开' }}
+      </button>
+      <button type="button" class="btn" @click="showFlash('done')">{{ flash === 'done' ? '已完成 ✓' : '完成' }}</button>
       <label class="toggle-wrap">
         <span>点选模式</span>
-        <span class="toggle on"><i /></span>
+        <span class="toggle" :class="{ on: pickMode }" @click="pickMode = !pickMode"><i /></span>
       </label>
     </div>
 
@@ -93,7 +165,7 @@ const fields: Field[] = [
         已选整列
       </span>
       <span class="spacer" />
-      <span class="muted">实时预览 · 双向同步</span>
+      <span class="muted">{{ pickMode ? '实时预览 · 双向同步' : '点选模式已关闭' }}</span>
     </div>
 
     <div class="pick-body">
@@ -110,20 +182,23 @@ const fields: Field[] = [
         </div>
         <div class="crumb">首页 / 小说 / 玄幻 · 共 128 本</div>
         <div class="grid">
-          <div v-for="b in books" :key="b.title" class="pcard" :class="{ picked: b.picked }">
+          <div
+            v-for="b in books"
+            :key="b.title"
+            class="pcard"
+            :class="{ picked: b.title === pickedTitle, pickable: pickMode }"
+            @click="pickCard(b.title)">
             <div class="pimg" />
             <div class="ptitle-wrap">
-              <span v-if="b.picked" class="tag">a.title · 同列 5</span>
+              <span v-if="b.title === pickedTitle" class="tag">a.title · 同列 5</span>
               <div class="ptitle">{{ b.title }}</div>
             </div>
             <div class="pprice">{{ b.price }}</div>
           </div>
         </div>
         <div class="pager">
-          <span class="pg active">1</span>
-          <span class="pg">2</span>
-          <span class="pg">3</span>
-          <span class="pg next">下一页 ›</span>
+          <span v-for="n in 3" :key="n" class="pg" :class="{ active: page === n }" @click="page = n">{{ n }}</span>
+          <span class="pg next" @click="page = Math.min(3, page + 1)">下一页 ›</span>
         </div>
       </div>
 
@@ -132,28 +207,44 @@ const fields: Field[] = [
         <div class="fields-head">
           <span class="fh-title">
             已选字段
-            <b>3</b>
+            <b>{{ fields.length }}</b>
           </span>
           <span class="fh-ok">✓ 每列匹配 5 项</span>
         </div>
 
         <div class="fields-scroll">
-          <div v-for="f in fields" :key="f.name" class="fcard">
+          <div v-for="f in fields" :key="f.id" class="fcard">
             <div class="fc-top">
               <i class="fdot" :style="{ background: f.dot }" />
-              <div class="fname">{{ f.name }}</div>
+              <input class="fname" v-model="f.name" />
               <span class="fc-label">字段名</span>
             </div>
             <div class="fc-sel">
               <span class="sel-k">选择器</span>
-              <span class="sel-v mono">{{ f.selector }}</span>
-              <Pencil :size="13" class="sel-edit" />
+              <input class="sel-v mono" v-model="f.selector" />
+              <Pencil :size="13" class="sel-edit" @click="focusSelector" />
             </div>
             <div class="fc-row">
-              <span class="dd">
-                {{ f.type }}
-                <ChevronDown :size="13" />
-              </span>
+              <DropdownMenuRoot>
+                <DropdownMenuTrigger as-child>
+                  <span class="dd">
+                    {{ f.type }}
+                    <ChevronDown :size="13" />
+                  </span>
+                </DropdownMenuTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuContent class="pk-menu" align="start" :side-offset="6">
+                    <DropdownMenuItem
+                      v-for="t in TYPE_OPTS"
+                      :key="t"
+                      class="pk-menu-item"
+                      :class="{ active: f.type === t }"
+                      @select="f.type = t">
+                      {{ t }}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenuPortal>
+              </DropdownMenuRoot>
               <span class="chip ok sm">✓ 匹配 5 项</span>
             </div>
             <div v-if="f.lazy" class="fc-warn">
@@ -166,23 +257,43 @@ const fields: Field[] = [
                 <i v-for="n in 5" :key="n" class="rdot" :class="{ on: n <= f.robust }" />
                 {{ f.robustLabel }}
               </span>
-              <span class="dd sm">
-                取属性 {{ f.attr }}
-                <ChevronDown :size="13" />
-              </span>
-              <button type="button" class="del">删除</button>
+              <DropdownMenuRoot>
+                <DropdownMenuTrigger as-child>
+                  <span class="dd sm">
+                    取属性 {{ f.attr }}
+                    <ChevronDown :size="13" />
+                  </span>
+                </DropdownMenuTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuContent class="pk-menu" align="end" :side-offset="6">
+                    <DropdownMenuItem
+                      v-for="a in ATTR_OPTS"
+                      :key="a"
+                      class="pk-menu-item"
+                      :class="{ active: f.attr === a }"
+                      @select="f.attr = a">
+                      {{ a }}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenuPortal>
+              </DropdownMenuRoot>
+              <button type="button" class="del" @click="removeField(f.id)">删除</button>
             </div>
           </div>
         </div>
 
         <div class="fields-actions">
           <div class="add-row">
-            <button type="button" class="add">+ 手动添加字段</button>
-            <button type="button" class="add">+ 分页规则</button>
+            <button type="button" class="add" @click="addField">+ 手动添加字段</button>
+            <button type="button" class="add" @click="addPageRule">
+              {{ flash === 'page' ? '✓ 已添加分页规则' : '+ 分页规则' }}
+            </button>
           </div>
           <div class="fields-foot">
             <button type="button" class="btn primary wide" @click="router.push('/data')">预览数据</button>
-            <button type="button" class="btn ghost">保存为任务</button>
+            <button type="button" class="btn ghost" @click="saveAsTask">
+              {{ flash === 'save' ? '已保存 ✓' : '保存为任务' }}
+            </button>
           </div>
         </div>
       </aside>
@@ -223,6 +334,18 @@ const fields: Field[] = [
 .url-input .mono {
   font-size: 12.5px;
   color: var(--text);
+}
+.url-field {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12.5px;
+}
+.url-field::placeholder {
+  color: var(--text-dim);
 }
 .chip {
   display: inline-flex;
@@ -399,6 +522,12 @@ const fields: Field[] = [
   border: 1px solid transparent;
   border-radius: 8px;
 }
+.pcard.pickable {
+  cursor: pointer;
+}
+.pcard.pickable:hover .ptitle {
+  border-color: var(--accent);
+}
 .pcard.picked {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -454,6 +583,7 @@ const fields: Field[] = [
   border-radius: 6px;
   color: var(--text-secondary);
   font-size: 12.5px;
+  cursor: pointer;
 }
 .pg.active {
   background: var(--accent);
@@ -518,19 +648,27 @@ const fields: Field[] = [
   width: 9px;
   height: 9px;
   border-radius: 3px;
+  flex: none;
 }
 .fname {
   flex: 1;
+  min-width: 0;
   padding: 5px 9px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 7px;
   font-size: 13px;
   font-weight: 600;
+  color: var(--text);
+  outline: none;
+}
+.fname:focus {
+  border-color: var(--accent);
 }
 .fc-label {
   color: var(--text-dim);
   font-size: 11.5px;
+  flex: none;
 }
 .fc-sel {
   display: flex;
@@ -545,15 +683,21 @@ const fields: Field[] = [
 .sel-k {
   color: var(--text-dim);
   font-size: 11.5px;
+  flex: none;
 }
 .sel-v {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
   color: var(--accent-text);
+  background: none;
+  border: none;
+  outline: none;
 }
 .sel-edit {
   color: var(--text-dim);
   cursor: pointer;
+  flex: none;
 }
 .fc-row {
   display: flex;
@@ -572,6 +716,9 @@ const fields: Field[] = [
   font-size: 12px;
   color: var(--text);
   cursor: pointer;
+}
+.dd:hover {
+  border-color: var(--text-dim);
 }
 .dd.sm {
   font-size: 11.5px;
@@ -643,5 +790,38 @@ const fields: Field[] = [
 .fields-foot {
   display: flex;
   gap: 10px;
+}
+</style>
+
+<style>
+/* Reka 下拉 portal 到 body 外,scoped 够不着 → 全局样式(pk- 前缀避免外泄) */
+.pk-menu {
+  min-width: 120px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.pk-menu:focus {
+  outline: none;
+}
+.pk-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.pk-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.pk-menu-item.active {
+  color: var(--accent-text);
 }
 </style>

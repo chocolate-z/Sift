@@ -15,7 +15,10 @@ import {
   SlidersHorizontal,
   Terminal
 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+
+const router = useRouter()
 
 interface NavItem {
   label: string
@@ -148,7 +151,7 @@ const clock = '16:57:11'
           </div>
         </nav>
         <div class="rules-wrap">
-          <div class="rules-card">
+          <div class="rules-card" @click="router.push('/import')">
             <span class="rc-ico">
               <svg
                 width="14"

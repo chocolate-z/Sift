@@ -1,7 +1,42 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref } from 'vue'
+
 const accents = ['#7C5CFC', '#2DD4BF', '#E0A85A', '#4A8FE0']
 const themes = ['浅色', '深色', '跟随系统']
 const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
+
+const theme = ref('深色')
+const accentIdx = ref(0)
+const checkUpdate = ref(true)
+const notify = ref(true)
+
+// 目录选择 / 激活码更换属系统动作,留待 Tauri 集成;现给瞬时确认反馈
+const dirFlash = ref(false)
+const keyFlash = ref(false)
+const upsellFlash = ref(false)
+let dirTimer: ReturnType<typeof setTimeout> | undefined
+let keyTimer: ReturnType<typeof setTimeout> | undefined
+let upsellTimer: ReturnType<typeof setTimeout> | undefined
+function showUpsell() {
+  upsellFlash.value = true
+  if (upsellTimer) clearTimeout(upsellTimer)
+  upsellTimer = setTimeout(() => (upsellFlash.value = false), 1600)
+}
+function changeDir() {
+  dirFlash.value = true
+  if (dirTimer) clearTimeout(dirTimer)
+  dirTimer = setTimeout(() => (dirFlash.value = false), 1200)
+}
+function changeKey() {
+  keyFlash.value = true
+  if (keyTimer) clearTimeout(keyTimer)
+  keyTimer = setTimeout(() => (keyFlash.value = false), 1200)
+}
+onBeforeUnmount(() => {
+  if (dirTimer) clearTimeout(dirTimer)
+  if (keyTimer) clearTimeout(keyTimer)
+  if (upsellTimer) clearTimeout(upsellTimer)
+})
 </script>
 
 <template>
@@ -51,13 +86,15 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
               <span class="lk-label">激活码</span>
               <div class="lk-row">
                 <div class="lk-code mono">SIFT-PRO-••••-••••-9F2C</div>
-                <button type="button" class="btn-soft">更换</button>
+                <button type="button" class="btn-soft" @click="changeKey">{{ keyFlash ? '已更换 ✓' : '更换' }}</button>
               </div>
             </div>
           </div>
           <div class="caps">
             <span v-for="c in capabilities" :key="c" class="cap">{{ c }}</span>
-            <span class="cap upsell">升级 Max 解锁无限并发 →</span>
+            <span class="cap upsell" @click="showUpsell">
+              {{ upsellFlash ? 'Max 套餐即将上线 ✓' : '升级 Max 解锁无限并发 →' }}
+            </span>
           </div>
         </div>
 
@@ -75,7 +112,7 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
             <div class="row theme-row">
               <span class="row-label">主题</span>
               <div class="seg">
-                <span v-for="t in themes" :key="t" :class="{ on: t === '深色' }">{{ t }}</span>
+                <span v-for="t in themes" :key="t" :class="{ on: t === theme }" @click="theme = t">{{ t }}</span>
               </div>
             </div>
             <div class="row accent-row">
@@ -88,8 +125,9 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
                   v-for="(c, i) in accents"
                   :key="c"
                   class="dot"
-                  :class="{ on: i === 0 }"
-                  :style="{ background: c }" />
+                  :class="{ on: i === accentIdx }"
+                  :style="{ background: c }"
+                  @click="accentIdx = i" />
               </div>
             </div>
           </div>
@@ -101,16 +139,18 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
                 <span class="row-label">默认下载目录</span>
                 <div class="gen-right">
                   <span class="gen-path mono">~/Sift/Downloads</span>
-                  <button type="button" class="btn-soft sm">更改</button>
+                  <button type="button" class="btn-soft sm" @click="changeDir">
+                    {{ dirFlash ? '已更改 ✓' : '更改' }}
+                  </button>
                 </div>
               </div>
               <div class="gen-row bordered">
                 <span class="row-label">启动时检查更新</span>
-                <span class="toggle on"><i /></span>
+                <span class="toggle" :class="{ on: checkUpdate }" @click="checkUpdate = !checkUpdate"><i /></span>
               </div>
               <div class="gen-row">
                 <span class="row-label">完成后发送系统通知</span>
-                <span class="toggle on"><i /></span>
+                <span class="toggle" :class="{ on: notify }" @click="notify = !notify"><i /></span>
               </div>
             </div>
           </div>
@@ -296,6 +336,11 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
   color: #7a7a87;
   background: var(--bg-card);
   border-color: var(--border);
+  cursor: pointer;
+}
+.cap.upsell:hover {
+  color: var(--accent-text);
+  border-color: #3a3066;
 }
 
 /* 外观 + 通用 两栏 */
@@ -385,18 +430,27 @@ const capabilities = ['并发上限 8', '定时任务', 'EPUB 导出']
   width: 30px;
   height: 17px;
   border-radius: 9px;
-  background: var(--accent);
+  background: #3a3a46;
   position: relative;
   flex: none;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 .toggle i {
   position: absolute;
   top: 2px;
-  left: 15px;
+  left: 2px;
   width: 13px;
   height: 13px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: left 0.15s;
+}
+.toggle.on {
+  background: var(--accent);
+}
+.toggle.on i {
+  left: 15px;
 }
 </style>

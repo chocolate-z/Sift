@@ -1,50 +1,53 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuTrigger
+} from 'reka-ui'
+import { useCompletedStore, type DoneRecord } from '@/stores/completed'
 
-const alt = ref(false) // false=有记录(默认) · true=空态
+const store = useCompletedStore()
 
-interface DoneRecord {
-  name: string
-  fileType: '文本' | '图片' | '数据'
-  icon: 'txt' | 'img' | 'data'
-  path: string
-  size: string
-  count: string
-  time: string
-  source: string
+const searchText = ref('')
+const typeFilter = ref<'all' | '文本' | '图片' | '数据'>('all')
+const typeLabel = computed(() => (typeFilter.value === 'all' ? '全部类型' : typeFilter.value))
+
+const filtered = computed(() => {
+  let list = store.records
+  if (typeFilter.value !== 'all') list = list.filter((r) => r.fileType === typeFilter.value)
+  const q = searchText.value.trim().toLowerCase()
+  if (q) list = list.filter((r) => `${r.name}${r.source}${r.path}`.toLowerCase().includes(q))
+  return list
+})
+
+// 文件操作(打开/定位/重导出/批量导出)属真实文件系统动作,留待 Tauri 集成;现给瞬时确认反馈
+const flash = ref<{ id: number; act: string } | null>(null)
+const exportFlash = ref(false)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+let exportTimer: ReturnType<typeof setTimeout> | undefined
+function doFlash(id: number, act: string) {
+  flash.value = { id, act }
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flash.value = null), 1200)
 }
-const records: DoneRecord[] = [
-  {
-    name: '诡秘之主·全本.txt',
-    fileType: '文本',
-    icon: 'txt',
-    path: '~/Sift/downloads/诡秘之主/全本.txt',
-    size: '8.6 MB',
-    count: '1083 章',
-    time: '今天 14:20',
-    source: '来源 七猫·诡秘之主'
-  },
-  {
-    name: '书城封面图集.zip',
-    fileType: '图片',
-    icon: 'img',
-    path: '~/Sift/downloads/covers.zip',
-    size: '24.3 MB',
-    count: '50 张',
-    time: '今天 13:05',
-    source: '来源 书城商品列表'
-  },
-  {
-    name: '商品数据.csv',
-    fileType: '数据',
-    icon: 'data',
-    path: '~/Sift/exports/products.csv',
-    size: '12 KB',
-    count: '5 行',
-    time: '昨天 18:40',
-    source: '来源 书城商品列表'
-  }
-]
+function isFlash(id: number, act: string) {
+  return flash.value?.id === id && flash.value?.act === act
+}
+function actLabel(r: DoneRecord, act: string, base: string, done: string) {
+  return isFlash(r.id, act) ? done : base
+}
+function batchExport() {
+  exportFlash.value = true
+  if (exportTimer) clearTimeout(exportTimer)
+  exportTimer = setTimeout(() => (exportFlash.value = false), 1200)
+}
+onBeforeUnmount(() => {
+  if (flashTimer) clearTimeout(flashTimer)
+  if (exportTimer) clearTimeout(exportTimer)
+})
 </script>
 
 <template>
@@ -58,37 +61,67 @@ const records: DoneRecord[] = [
             <circle cx="7" cy="7" r="4.5" />
             <path d="M10.5 10.5L14 14" />
           </svg>
-          <input class="mono" placeholder="搜索文件名 / 来源…" />
+          <input class="mono" placeholder="搜索文件名 / 来源…" v-model="searchText" />
         </div>
-        <div class="dropdown">
-          全部类型
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="#6a6a76"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </div>
+        <DropdownMenuRoot>
+          <DropdownMenuTrigger as-child>
+            <div class="dropdown">
+              {{ typeLabel }}
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="#6a6a76"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuContent class="cp-menu" align="start" :side-offset="6">
+              <DropdownMenuItem
+                class="cp-menu-item"
+                :class="{ active: typeFilter === 'all' }"
+                @select="typeFilter = 'all'">
+                全部类型
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="cp-menu-item"
+                :class="{ active: typeFilter === '文本' }"
+                @select="typeFilter = '文本'">
+                文本
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="cp-menu-item"
+                :class="{ active: typeFilter === '图片' }"
+                @select="typeFilter = '图片'">
+                图片
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="cp-menu-item"
+                :class="{ active: typeFilter === '数据' }"
+                @select="typeFilter = '数据'">
+                数据
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenuPortal>
+        </DropdownMenuRoot>
         <div class="tb-right">
-          <div class="seg">
-            <span :class="{ on: !alt }" @click="alt = false">有记录</span>
-            <span :class="{ on: alt }" @click="alt = true">空态</span>
-          </div>
-          <button type="button" class="btn-soft">批量导出</button>
-          <button type="button" class="btn-danger">批量删除</button>
+          <button type="button" class="btn-soft" @click="batchExport">
+            {{ exportFlash ? '已导出 ✓' : '批量导出' }}
+          </button>
+          <button type="button" class="btn-danger" @click="store.clear()">批量删除</button>
         </div>
       </div>
     </header>
 
     <div class="body">
       <!-- 有记录 -->
-      <div v-if="!alt" class="list">
-        <div v-for="r in records" :key="r.name" class="done-row">
+      <div v-if="filtered.length" class="list">
+        <div v-for="r in filtered" :key="r.id" class="done-row">
           <span class="file-ico" :class="r.icon">
             <svg
               v-if="r.icon === 'txt'"
@@ -152,10 +185,10 @@ const records: DoneRecord[] = [
           </div>
 
           <div class="dr-actions">
-            <span class="act open">打开</span>
-            <span class="act">定位</span>
-            <span class="act">重导出</span>
-            <span class="act del">删除</span>
+            <span class="act open" @click="doFlash(r.id, 'open')">{{ actLabel(r, 'open', '打开', '已打开 ✓') }}</span>
+            <span class="act" @click="doFlash(r.id, 'locate')">{{ actLabel(r, 'locate', '定位', '已定位 ✓') }}</span>
+            <span class="act" @click="doFlash(r.id, 'export')">{{ actLabel(r, 'export', '重导出', '已导出 ✓') }}</span>
+            <span class="act del" @click="store.remove(r.id)">删除</span>
           </div>
         </div>
       </div>
@@ -175,7 +208,9 @@ const records: DoneRecord[] = [
             <path d="M3 8.5l3 3 7-7" />
           </svg>
         </div>
-        <div class="empty-title">还没有完成记录</div>
+        <div class="empty-title">
+          {{ searchText.trim() || typeFilter !== 'all' ? '没有匹配的记录' : '还没有完成记录' }}
+        </div>
         <div class="empty-desc">完成的下载与导出会归档在这里,可随时重新打开、导出或定位文件。</div>
       </div>
     </div>
@@ -244,36 +279,14 @@ const records: DoneRecord[] = [
   color: #9a9aa6;
   cursor: pointer;
 }
+.dropdown:hover {
+  border-color: #33333f;
+}
 .tb-right {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 9px;
-}
-.seg {
-  display: flex;
-  height: 36px;
-  padding: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.seg span {
-  display: flex;
-  align-items: center;
-  padding: 0 11px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.seg span.on:first-child {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-}
-.seg span.on:last-child {
-  color: #cdccd8;
-  background: var(--bg-elevated);
 }
 .btn-soft {
   height: 36px;
@@ -321,7 +334,6 @@ const records: DoneRecord[] = [
   border: 1px solid var(--border);
   border-radius: 11px;
   padding: 13px 16px;
-  cursor: pointer;
 }
 .done-row:hover {
   border-color: #33333f;
@@ -448,5 +460,38 @@ const records: DoneRecord[] = [
   color: var(--text-secondary);
   line-height: 1.6;
   max-width: 340px;
+}
+</style>
+
+<style>
+/* Reka 下拉 portal 到 body 外,scoped 够不着 → 全局样式(cp- 前缀避免外泄) */
+.cp-menu {
+  min-width: 132px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.cp-menu:focus {
+  outline: none;
+}
+.cp-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.cp-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.cp-menu-item.active {
+  color: var(--accent-text);
 }
 </style>

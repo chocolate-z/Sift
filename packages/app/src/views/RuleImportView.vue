@@ -1,5 +1,30 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  TooltipContent,
+  TooltipPortal,
+  TooltipProvider,
+  TooltipRoot,
+  TooltipTrigger
+} from 'reka-ui'
+import { useTasksStore } from '@/stores/tasks'
+
+const router = useRouter()
+const tasks = useTasksStore()
 
 // 卡片 1:七猫 API 源 —— 元信息 chip
 const qimaoMeta = [
@@ -67,6 +92,128 @@ const jgbSearchPath = [
 // 交互状态:过滤展开、未识别字段收起
 const filterOpen = ref(true)
 const unknownOpen = ref(false)
+
+// 源卡删除(隐藏)
+const qimaoVisible = ref(true)
+const jgbVisible = ref(true)
+
+// 查看原始 JSON(真实书源规则)
+const RAW_SOURCES: Record<'qimao' | 'jgb', Record<string, unknown>> = {
+  qimao: {
+    source_name: '七猫中文网(免会员)',
+    source_type: '2',
+    source_url: 'https://www.qimao.com/',
+    source_remark: '可直接阅读，无需会员无需登录无需设置cookie',
+    time_out: 5000,
+    book_name: 'none',
+    book_menu: 'key$$data.key$$chapters',
+    item_id: 'key$$id',
+    item_name: 'key$$title',
+    item_url: 'https://www.qimao.com/shuku/###book_id###-###item_id###/',
+    chapter_title: '',
+    chapter_content_type: '1',
+    chapter_content: 'body',
+    content_filter: [],
+    search_url: 'https://www.qimao.com/qimaoapi/api/search/result?keyword=###keyword###&count=0&page=1&page_size=15',
+    search_result: {
+      limit: '7',
+      list: 'key$$data.key$$search_list',
+      book_id: 'key$$book_id',
+      name: 'key$$title',
+      author: 'key$$author',
+      newest: 'key$$latest_chapter_title',
+      remark: 'key$$intro',
+      cover: 'key$$image_link',
+      url: 'https://www.qimao.com/qimaoapi/api/book/chapter-list?book_id=###book_id###'
+    }
+  },
+  jgb: {
+    source_name: '旧钢笔文学',
+    source_url: 'http://www.jiugangbi.com/',
+    time_out: 6000,
+    book_name: '.currentnovelyfw .catalogyfw_info .novelname_author .novelname',
+    book_author: '.currentnovelyfw .catalogyfw_info .novelname_author .novelauthor a',
+    book_cover: '.currentnovelyfw .catalogyfw_pic img',
+    book_menu: '.indexyfw_listbox .listchapter ul li:gt(8) a',
+    book_menu_attr: 'href',
+    chapter_title: '.currentlocationyfw > p:eq(6) a',
+    chapter_content_type: '1',
+    chapter_content: '.chapter_content > a:eq(1)',
+    content_filter: [
+      'd3d3LmppdWdhbmdiaS5jb23mj5DkvpvnmoQuK+mhtVwp',
+      'LS0uK+acrOeroOacquWujO+8jOivt+eCueWHu+S4i+S4gOmhtee7p+e7remYheivuy4=',
+      '44CQ6K+35pS26JePLivnmoTlsI/or7TjgJE='
+    ],
+    multi_page: true,
+    next_btn: '.sytlet_footer_buttom ul li.buttom_next a',
+    next_val: '下一页',
+    search_url: '{{302}}{{gb2312}}http://www.jiugangbi.com/modules/article/search.php?searchkey=###keyword###&an=搜索',
+    search_result: {
+      limit: '6',
+      list: '.toplist_list .list_ul li,.indexyfw_novel',
+      name: '.currentnovelyfw .catalogyfw_info .novelname_author .novelname',
+      author: 'p.p3,.currentnovelyfw .catalogyfw_info .novelname_author .novelauthor a',
+      cover_attr: 'src',
+      url_type: '2',
+      url_replace_rules: ['http://m%%http://www'],
+      url_attr: 'href'
+    }
+  }
+}
+const SRC_NAME: Record<'qimao' | 'jgb', string> = { qimao: '七猫中文网(免会员)', jgb: '旧钢笔文学' }
+const jsonOpen = ref(false)
+const jsonKey = ref<'qimao' | 'jgb'>('qimao')
+const jsonText = computed(() => JSON.stringify(RAW_SOURCES[jsonKey.value], null, 2))
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+function viewJson(key: 'qimao' | 'jgb') {
+  jsonKey.value = key
+  copied.value = false
+  jsonOpen.value = true
+}
+function copyJson() {
+  navigator.clipboard?.writeText(jsonText.value)
+  copied.value = true
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = false), 1300)
+}
+
+// 保存为任务 → 写入任务列表;其余动作部分待引擎,现给瞬时反馈
+const flash = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function showFlash(key: string) {
+  flash.value = key
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flash.value = null), 1300)
+}
+function saveQimao() {
+  tasks.addTask({
+    name: '七猫中文网',
+    type: 'api',
+    url: 'www.qimao.com',
+    fields: '5',
+    lastRun: '从未运行',
+    result: '—',
+    status: 'ready'
+  })
+  showFlash('save-qimao')
+}
+function saveJgb() {
+  tasks.addTask({
+    name: '旧钢笔文学',
+    type: 'web',
+    url: 'www.jiugangbi.com',
+    fields: '4',
+    lastRun: '从未运行',
+    result: '—',
+    status: 'ready'
+  })
+  showFlash('save-jgb')
+}
+onBeforeUnmount(() => {
+  if (flashTimer) clearTimeout(flashTimer)
+  if (copiedTimer) clearTimeout(copiedTimer)
+})
 </script>
 
 <template>
@@ -94,14 +241,16 @@ const unknownOpen = ref(false)
         <span class="head-sub">Sift 已自动识别规则类型、解码内容、还原采集链路</span>
       </div>
       <div class="head-actions">
-        <button type="button" class="btn-soft">‹ 返回粘贴</button>
-        <button type="button" class="btn-soft">重新解析</button>
+        <button type="button" class="btn-soft" @click="router.back()">‹ 返回粘贴</button>
+        <button type="button" class="btn-soft" @click="showFlash('reparse')">
+          {{ flash === 'reparse' ? '✓ 已重新解析' : '重新解析' }}
+        </button>
       </div>
     </header>
 
     <div class="body">
       <!-- ===== 卡片 1:七猫 API 源 ===== -->
-      <article class="src-card">
+      <article v-if="qimaoVisible" class="src-card">
         <div class="src-head">
           <span class="type-badge api">
             <span class="glyph mono">{ }</span>
@@ -115,7 +264,18 @@ const unknownOpen = ref(false)
             <i class="ok-dot" />
             格式正确
           </span>
-          <span class="src-more">⋯</span>
+          <DropdownMenuRoot>
+            <DropdownMenuTrigger as-child>
+              <span class="src-more">⋯</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent class="ri-menu" align="end" :side-offset="6">
+                <DropdownMenuItem class="ri-menu-item" @select="viewJson('qimao')">查看原始 JSON</DropdownMenuItem>
+                <DropdownMenuSeparator class="ri-menu-sep" />
+                <DropdownMenuItem class="ri-menu-item danger" @select="qimaoVisible = false">删除源</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
         </div>
 
         <div class="meta-row">
@@ -241,14 +401,16 @@ const unknownOpen = ref(false)
         </div>
 
         <div class="src-foot">
-          <button type="button" class="btn-primary">保存为任务</button>
-          <button type="button" class="btn-soft tall">测试搜索</button>
-          <span class="btn-link">查看原始 JSON</span>
+          <button type="button" class="btn-primary" @click="saveQimao">
+            {{ flash === 'save-qimao' ? '已保存 ✓' : '保存为任务' }}
+          </button>
+          <button type="button" class="btn-soft tall" @click="router.push('/debug')">测试搜索</button>
+          <span class="btn-link" @click="viewJson('qimao')">查看原始 JSON</span>
         </div>
       </article>
 
       <!-- ===== 卡片 2:旧钢笔网页源 ===== -->
-      <article class="src-card">
+      <article v-if="jgbVisible" class="src-card">
         <div class="src-head">
           <span class="type-badge web">
             <span class="glyph mono">&lt;/&gt;</span>
@@ -262,7 +424,18 @@ const unknownOpen = ref(false)
             <i class="ok-dot" />
             格式正确
           </span>
-          <span class="src-more">⋯</span>
+          <DropdownMenuRoot>
+            <DropdownMenuTrigger as-child>
+              <span class="src-more">⋯</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent class="ri-menu" align="end" :side-offset="6">
+                <DropdownMenuItem class="ri-menu-item" @select="viewJson('jgb')">查看原始 JSON</DropdownMenuItem>
+                <DropdownMenuSeparator class="ri-menu-sep" />
+                <DropdownMenuItem class="ri-menu-item danger" @select="jgbVisible = false">删除源</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
         </div>
 
         <div class="meta-row">
@@ -376,7 +549,18 @@ const unknownOpen = ref(false)
               .listchapter ul li
               <span class="pseudo">
                 :gt(8)
-                <span class="pseudo-help" title="取第 9 项及之后(跳过开头的最新章节区块)">?</span>
+                <TooltipProvider :delay-duration="150">
+                  <TooltipRoot>
+                    <TooltipTrigger as-child>
+                      <span class="pseudo-help">?</span>
+                    </TooltipTrigger>
+                    <TooltipPortal>
+                      <TooltipContent class="ri-tip" :side-offset="6">
+                        取第 9 项及之后(跳过开头的最新章节区块)
+                      </TooltipContent>
+                    </TooltipPortal>
+                  </TooltipRoot>
+                </TooltipProvider>
               </span>
               a
             </div>
@@ -411,7 +595,16 @@ const unknownOpen = ref(false)
               .chapter_content &gt; a
               <span class="pseudo">
                 :eq(1)
-                <span class="pseudo-help" title="取匹配到的第 2 个 <a>">?</span>
+                <TooltipProvider :delay-duration="150">
+                  <TooltipRoot>
+                    <TooltipTrigger as-child>
+                      <span class="pseudo-help">?</span>
+                    </TooltipTrigger>
+                    <TooltipPortal>
+                      <TooltipContent class="ri-tip" :side-offset="6">取匹配到的第 2 个 &lt;a&gt;</TooltipContent>
+                    </TooltipPortal>
+                  </TooltipRoot>
+                </TooltipProvider>
               </span>
             </div>
             <div class="sel-note sm">
@@ -539,12 +732,32 @@ const unknownOpen = ref(false)
         </div>
 
         <div class="src-foot">
-          <button type="button" class="btn-primary">保存为任务</button>
-          <button type="button" class="btn-soft tall">测试搜索</button>
-          <span class="btn-link">查看原始 JSON</span>
+          <button type="button" class="btn-primary" @click="saveJgb">
+            {{ flash === 'save-jgb' ? '已保存 ✓' : '保存为任务' }}
+          </button>
+          <button type="button" class="btn-soft tall" @click="router.push('/debug')">测试搜索</button>
+          <span class="btn-link" @click="viewJson('jgb')">查看原始 JSON</span>
         </div>
       </article>
     </div>
+
+    <!-- 原始规则 JSON 弹层 -->
+    <DialogRoot v-model:open="jsonOpen">
+      <DialogPortal>
+        <DialogOverlay class="ri-overlay" />
+        <DialogContent class="ri-dialog" @open-auto-focus.prevent>
+          <DialogTitle class="ri-dialog-title">原始规则 JSON · {{ SRC_NAME[jsonKey] }}</DialogTitle>
+          <DialogDescription class="ri-dialog-desc">Sift 解析前的原始书源规则(技术验证用的真实源)。</DialogDescription>
+          <pre class="ri-json mono">{{ jsonText }}</pre>
+          <div class="ri-dialog-foot">
+            <DialogClose class="ri-btn-ghost">关闭</DialogClose>
+            <button type="button" class="ri-btn-primary" @click="copyJson">
+              {{ copied ? '已复制 ✓' : '复制 JSON' }}
+            </button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </section>
 </template>
 
@@ -1248,5 +1461,144 @@ const unknownOpen = ref(false)
 }
 .btn-link:hover {
   color: var(--accent-text);
+}
+</style>
+
+<style>
+/* Reka Tooltip portal 到 body 外,scoped 够不着 → 全局样式(ri- 前缀避免外泄) */
+.ri-tip {
+  max-width: 240px;
+  background: #1b1b24;
+  border: 1px solid #3a3a46;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  color: #cdccd8;
+  line-height: 1.5;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  z-index: 1001;
+}
+
+/* ⋯ 更多操作菜单 */
+.ri-menu {
+  min-width: 150px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.ri-menu:focus {
+  outline: none;
+}
+.ri-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.ri-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.ri-menu-item.danger {
+  color: #e0908b;
+}
+.ri-menu-item.danger[data-highlighted] {
+  background: rgba(224, 68, 62, 0.16);
+  color: #f1837d;
+}
+.ri-menu-sep {
+  height: 1px;
+  margin: 4px;
+  background: #24242e;
+}
+
+/* 原始 JSON 弹层 */
+.ri-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 11, 0.62);
+  z-index: 1000;
+}
+.ri-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #15151d;
+  border: 1px solid #2a2a34;
+  border-radius: 14px;
+  padding: 20px;
+  z-index: 1001;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  line-height: normal;
+}
+.ri-dialog:focus {
+  outline: none;
+}
+.ri-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.ri-dialog-desc {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ri-json {
+  margin: 0;
+  max-height: 50vh;
+  overflow: auto;
+  background: #0b0b11;
+  border: 1px solid #24242e;
+  border-radius: 9px;
+  padding: 13px 15px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: #a9a4c9;
+  white-space: pre;
+  user-select: text;
+}
+.ri-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.ri-btn-ghost {
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid #2e2e38;
+  color: #cdccd8;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ri-btn-ghost:hover {
+  border-color: #3a3a46;
+}
+.ri-btn-primary {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>

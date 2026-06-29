@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuTrigger
+} from 'reka-ui'
 
-const alt = ref(false) // false=有数据(默认) · true=空态
+const router = useRouter()
 
 const formats = ['CSV', 'JSON', 'Excel', 'TXT', 'EPUB']
+const exportFormat = ref('CSV')
 const rows = [
   { title: '剑来', price: '¥39.00', img: '/img/12345.jpg' },
   { title: '大奉打更人', price: '¥28.00', img: '/img/12346.jpg' },
@@ -11,6 +20,22 @@ const rows = [
   { title: '凡人修仙传', price: '¥32.00', img: '/img/12348.jpg' },
   { title: '三体', price: '¥35.00', img: '/img/12349.jpg' }
 ]
+
+const selected = ref<boolean[]>(rows.map(() => true))
+const allChecked = computed(() => selected.value.every(Boolean))
+const indeterminate = computed(() => selected.value.some(Boolean) && !allChecked.value)
+const selectedCount = computed(() => selected.value.filter(Boolean).length)
+function toggleAll() {
+  const v = !allChecked.value
+  selected.value = selected.value.map(() => v)
+}
+function toggleRow(i: number) {
+  selected.value[i] = !selected.value[i]
+}
+function downloadSelected() {
+  if (selectedCount.value === 0) return
+  router.push('/downloads')
+}
 </script>
 
 <template>
@@ -49,26 +74,38 @@ const rows = [
           <span class="mono fv">标题 · 价格 · 封面</span>
         </span>
         <div class="sr-right">
-          <div class="seg">
-            <span :class="{ on: !alt }" @click="alt = false">有数据</span>
-            <span :class="{ on: alt }" @click="alt = true">空态</span>
-          </div>
-          <div class="export-dd">
-            <span class="ed-label">导出</span>
-            CSV
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="#6a6a76"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round">
-              <path d="M4 6l4 4 4-4" />
-            </svg>
-          </div>
-          <button type="button" class="btn-dl">
+          <DropdownMenuRoot>
+            <DropdownMenuTrigger as-child>
+              <div class="export-dd">
+                <span class="ed-label">导出</span>
+                {{ exportFormat }}
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="#6a6a76"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent class="dp-menu" align="end" :side-offset="6">
+                <DropdownMenuItem
+                  v-for="f in formats"
+                  :key="f"
+                  class="dp-menu-item"
+                  :class="{ active: exportFormat === f }"
+                  @select="exportFormat = f">
+                  {{ f }}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
+          <button type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
             <svg
               width="13"
               height="13"
@@ -86,17 +123,38 @@ const rows = [
       </div>
 
       <div class="formats">
-        <span v-for="f in formats" :key="f" class="fmt-pill">{{ f }}</span>
+        <span
+          v-for="f in formats"
+          :key="f"
+          class="fmt-pill"
+          :class="{ active: exportFormat === f }"
+          @click="exportFormat = f">
+          {{ f }}
+        </span>
       </div>
     </header>
 
     <div class="body">
       <!-- 有数据 -->
-      <template v-if="!alt">
+      <template v-if="rows.length">
         <div class="table">
           <div class="t-head">
             <div class="th-check">
-              <span class="checkbox" />
+              <span class="checkbox" :class="{ on: allChecked || indeterminate }" @click="toggleAll">
+                <svg
+                  v-if="allChecked"
+                  width="9"
+                  height="9"
+                  viewBox="0 0 16 16"
+                  stroke="#fff"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M3 8.5l3 3 7-7" />
+                </svg>
+                <span v-else-if="indeterminate" class="cb-dash" />
+              </span>
             </div>
             <div class="th">封面</div>
             <div class="th">标题</div>
@@ -105,8 +163,9 @@ const rows = [
           </div>
           <div v-for="(r, i) in rows" :key="r.title" class="t-row" :class="{ last: i === rows.length - 1 }">
             <div class="td-check">
-              <span class="checkbox on">
+              <span class="checkbox" :class="{ on: selected[i] }" @click="toggleRow(i)">
                 <svg
+                  v-if="selected[i]"
                   width="9"
                   height="9"
                   viewBox="0 0 16 16"
@@ -152,7 +211,7 @@ const rows = [
         </div>
         <div class="empty-title">还没有数据</div>
         <div class="empty-desc">运行一个采集任务后,抓取到的结构化数据会在这里以表格呈现。</div>
-        <button type="button" class="btn-primary">去采集数据</button>
+        <button type="button" class="btn-primary" @click="router.push('/tasks')">去采集数据</button>
       </div>
     </div>
   </section>
@@ -225,31 +284,6 @@ const rows = [
   align-items: center;
   gap: 9px;
 }
-.seg {
-  display: flex;
-  height: 36px;
-  padding: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.seg span {
-  display: flex;
-  align-items: center;
-  padding: 0 11px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.seg span.on:first-child {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-}
-.seg span.on:last-child {
-  color: #cdccd8;
-  background: var(--bg-elevated);
-}
 .export-dd {
   display: flex;
   align-items: center;
@@ -262,6 +296,9 @@ const rows = [
   font-size: 12px;
   color: #cdccd8;
   cursor: pointer;
+}
+.export-dd:hover {
+  border-color: #33333f;
 }
 .ed-label {
   color: #7a7a87;
@@ -281,6 +318,11 @@ const rows = [
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
 }
+.btn-dl:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
 
 /* 格式 pill */
 .formats {
@@ -299,6 +341,11 @@ const rows = [
 }
 .fmt-pill:hover {
   border-color: #33333f;
+}
+.fmt-pill.active {
+  color: var(--accent-text);
+  background: rgba(124, 92, 252, 0.12);
+  border-color: #3a3066;
 }
 
 /* 表格 */
@@ -355,10 +402,17 @@ const rows = [
   height: 14px;
   border-radius: 4px;
   border: 1.5px solid #3a3a46;
+  cursor: pointer;
 }
 .checkbox.on {
   border: none;
   background: var(--accent);
+}
+.cb-dash {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: #fff;
 }
 .td {
   padding: 8px;
@@ -446,5 +500,38 @@ const rows = [
   font-weight: 600;
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
+}
+</style>
+
+<style>
+/* Reka 下拉 portal 到 body 外,scoped 够不着 → 全局样式(dp- 前缀避免外泄) */
+.dp-menu {
+  min-width: 132px;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.dp-menu:focus {
+  outline: none;
+}
+.dp-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.dp-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.dp-menu-item.active {
+  color: var(--accent-text);
 }
 </style>

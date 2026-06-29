@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { computed, onBeforeUnmount, ref } from 'vue'
+
 interface LogRow {
   time: string
   level: 'INFO' | 'WARN' | 'ERROR'
   msg: string
 }
-const logs: LogRow[] = [
+const logs = ref<LogRow[]>([
   { time: '16:57:11', level: 'INFO', msg: '引擎就绪 · 已加载 12 个规则' },
   { time: '16:57:09', level: 'INFO', msg: '七猫规则解析完成 · 识别 2 个数据源,正文过滤已解码' },
   { time: '16:56:40', level: 'WARN', msg: '旧钢笔会话即将过期 · 建议在凭据管理中更新 Cookie' },
@@ -18,7 +20,28 @@ const logs: LogRow[] = [
   { time: '16:55:31', level: 'INFO', msg: '书城商品列表 · 抓取完成 · 5 条 / 当前页' },
   { time: '16:55:02', level: 'ERROR', msg: '书城 API Token 已失效(401)· 请在凭据管理中重新登录' },
   { time: '16:54:47', level: 'INFO', msg: '应用启动 · Sift Pro v0.1.0 · 本地优先模式' }
-]
+])
+
+const filter = ref<'all' | 'warn' | 'error'>('all')
+const filtered = computed(() => {
+  if (filter.value === 'warn') return logs.value.filter((l) => l.level === 'WARN')
+  if (filter.value === 'error') return logs.value.filter((l) => l.level === 'ERROR')
+  return logs.value
+})
+
+const exportFlash = ref(false)
+let exportTimer: ReturnType<typeof setTimeout> | undefined
+function exportLogs() {
+  exportFlash.value = true
+  if (exportTimer) clearTimeout(exportTimer)
+  exportTimer = setTimeout(() => (exportFlash.value = false), 1200)
+}
+function clearLogs() {
+  logs.value = []
+}
+onBeforeUnmount(() => {
+  if (exportTimer) clearTimeout(exportTimer)
+})
 </script>
 
 <template>
@@ -31,23 +54,24 @@ const logs: LogRow[] = [
         </div>
         <div class="actions">
           <div class="seg">
-            <span class="on">全部</span>
-            <span>警告</span>
-            <span>错误</span>
+            <span :class="{ on: filter === 'all' }" @click="filter = 'all'">全部</span>
+            <span :class="{ on: filter === 'warn' }" @click="filter = 'warn'">警告</span>
+            <span :class="{ on: filter === 'error' }" @click="filter = 'error'">错误</span>
           </div>
-          <button type="button" class="btn-soft">导出</button>
-          <button type="button" class="btn-clear">清空</button>
+          <button type="button" class="btn-soft" @click="exportLogs">{{ exportFlash ? '已导出 ✓' : '导出' }}</button>
+          <button type="button" class="btn-clear" @click="clearLogs">清空</button>
         </div>
       </div>
     </header>
 
     <div class="body">
       <div class="console mono">
-        <div v-for="(l, i) in logs" :key="i" class="log-row" :class="{ last: i === logs.length - 1 }">
+        <div v-for="(l, i) in filtered" :key="i" class="log-row" :class="{ last: i === filtered.length - 1 }">
           <span class="time">{{ l.time }}</span>
           <span class="level" :class="l.level.toLowerCase()">{{ l.level }}</span>
           <span class="msg" :class="l.level.toLowerCase()">{{ l.msg }}</span>
         </div>
+        <div v-if="!filtered.length" class="log-empty">暂无日志</div>
       </div>
     </div>
   </section>
@@ -185,5 +209,11 @@ const logs: LogRow[] = [
 }
 .msg.error {
   color: #e69b96;
+}
+.log-empty {
+  padding: 28px 15px;
+  text-align: center;
+  color: #56565f;
+  font-size: 12px;
 }
 </style>

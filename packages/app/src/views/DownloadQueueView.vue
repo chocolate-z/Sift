@@ -1,66 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { useDownloadsStore, type DlStatus } from '@/stores/downloads'
 
-const alt = ref(false) // false=有任务(默认) · true=空态
+const store = useDownloadsStore()
 
-interface DlItem {
-  name: string
-  fileType: '文本' | '图片'
-  status: 'downloading' | 'paused' | 'waiting' | 'failed'
-  nameColor: 'white' | 'dim' | 'gray'
-  progress?: number
-  barColor?: 'purple' | 'gray'
-  pctColor?: 'accent' | 'gray'
-  detail?: string
-  statusText?: string // 失败原因
-  resume?: boolean
-  retry?: boolean
-  failBorder?: boolean
+const downloadingCount = computed(() => store.items.filter((i) => i.status === 'downloading').length)
+// 并发显示封顶到上限 2(引擎只会同时跑 2 个,多出的概念上排队)
+const activeSlots = computed(() => Math.min(downloadingCount.value, 2))
+
+function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
+  if (s === 'downloading') return 'white'
+  if (s === 'waiting') return 'gray'
+  return 'dim'
 }
-const items: DlItem[] = [
-  {
-    name: '诡秘之主/第0048章·深红.txt',
-    fileType: '文本',
-    status: 'downloading',
-    nameColor: 'white',
-    progress: 72,
-    barColor: 'purple',
-    pctColor: 'accent',
-    detail: '1.2 / 1.7 MB · 420 KB/s · 3s'
-  },
-  {
-    name: '封面_qimao_12345.jpg',
-    fileType: '图片',
-    status: 'downloading',
-    nameColor: 'white',
-    progress: 35,
-    barColor: 'purple',
-    pctColor: 'accent',
-    detail: '86 / 240 KB · 260 KB/s · 1s'
-  },
-  {
-    name: '诡秘之主/第0040章·星之子.txt',
-    fileType: '文本',
-    status: 'paused',
-    nameColor: 'dim',
-    progress: 48,
-    barColor: 'gray',
-    pctColor: 'gray',
-    detail: '已下 820 KB · 断点已保存',
-    resume: true
-  },
-  { name: '诡秘之主/第0051章·黑夜.txt', fileType: '文本', status: 'waiting', nameColor: 'gray' },
-  { name: '封面_qimao_12346.jpg', fileType: '图片', status: 'waiting', nameColor: 'gray' },
-  {
-    name: '诡秘之主/第0042章·愚者.txt',
-    fileType: '文本',
-    status: 'failed',
-    nameColor: 'dim',
-    statusText: '失败 · 超时',
-    retry: true,
-    failBorder: true
-  }
-]
 </script>
 
 <template>
@@ -71,11 +23,11 @@ const items: DlItem[] = [
       <div class="stats">
         <span class="stat">
           并发
-          <span class="mono accent">2 / 2</span>
+          <span class="mono accent">{{ activeSlots }} / 2</span>
         </span>
         <span class="stat">
           队列
-          <span class="mono v">6 项</span>
+          <span class="mono v">{{ store.items.length }} 项</span>
         </span>
         <span class="stat">
           总进度
@@ -83,29 +35,25 @@ const items: DlItem[] = [
         </span>
         <span class="stat">
           速度
-          <span class="mono ok">680 KB/s</span>
+          <span class="mono ok">{{ downloadingCount ? '680 KB/s' : '0 KB/s' }}</span>
         </span>
         <div class="stat-right">
-          <div class="seg">
-            <span :class="{ on: !alt }" @click="alt = false">有任务</span>
-            <span :class="{ on: alt }" @click="alt = true">空态</span>
-          </div>
-          <button type="button" class="btn-soft">全部暂停</button>
-          <button type="button" class="btn-soft">全部继续</button>
+          <button type="button" class="btn-soft" @click="store.pauseAll()">全部暂停</button>
+          <button type="button" class="btn-soft" @click="store.resumeAll()">全部继续</button>
         </div>
       </div>
     </header>
 
     <div class="body">
       <!-- 有任务 -->
-      <div v-if="!alt" class="list">
+      <div v-if="store.items.length" class="list">
         <div
-          v-for="(it, i) in items"
-          :key="i"
+          v-for="it in store.items"
+          :key="it.id"
           class="dl-item"
-          :class="{ prog: it.progress != null, failborder: it.failBorder }">
+          :class="{ prog: it.progress != null, failborder: it.status === 'failed' }">
           <div class="dl-head">
-            <span class="dl-name mono" :class="it.nameColor">{{ it.name }}</span>
+            <span class="dl-name mono" :class="nameColor(it.status)">{{ it.name }}</span>
             <span class="file-chip">{{ it.fileType }}</span>
 
             <!-- 状态指示 -->
@@ -126,12 +74,14 @@ const items: DlItem[] = [
             </span>
             <span v-else class="dl-stat failed">
               <span class="dot" />
-              {{ it.statusText }}
+              {{ it.failReason }}
             </span>
 
             <!-- 动作 -->
-            <button v-if="it.resume" type="button" class="mini-btn primary">续传</button>
-            <button v-if="it.retry" type="button" class="mini-btn">
+            <button v-if="it.status === 'paused'" type="button" class="mini-btn primary" @click="store.resume(it.id)">
+              续传
+            </button>
+            <button v-if="it.status === 'failed'" type="button" class="mini-btn" @click="store.retry(it.id)">
               <svg
                 width="11"
                 height="11"
@@ -145,13 +95,13 @@ const items: DlItem[] = [
               </svg>
               重试
             </button>
-            <span v-if="it.status === 'downloading'" class="ico-btn">
+            <span v-if="it.status === 'downloading'" class="ico-btn" @click="store.pause(it.id)">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="4" y="3" width="3" height="10" rx="1" />
                 <rect x="9" y="3" width="3" height="10" rx="1" />
               </svg>
             </span>
-            <span class="ico-btn del" :class="{ dim: it.progress == null }">
+            <span class="ico-btn del" :class="{ dim: it.progress == null }" @click="store.remove(it.id)">
               <svg
                 width="14"
                 height="14"
@@ -166,9 +116,12 @@ const items: DlItem[] = [
 
           <div v-if="it.progress != null" class="dl-prog">
             <div class="bar">
-              <div class="bar-fill" :class="it.barColor" :style="{ width: it.progress + '%' }" />
+              <div
+                class="bar-fill"
+                :class="it.status === 'paused' ? 'gray' : 'purple'"
+                :style="{ width: it.progress + '%' }" />
             </div>
-            <span class="pct mono" :class="it.pctColor">{{ it.progress }}%</span>
+            <span class="pct mono" :class="it.status === 'paused' ? 'gray' : 'accent'">{{ it.progress }}%</span>
             <span class="detail mono">{{ it.detail }}</span>
           </div>
         </div>
@@ -243,31 +196,6 @@ const items: DlItem[] = [
   display: flex;
   align-items: center;
   gap: 9px;
-}
-.seg {
-  display: flex;
-  height: 34px;
-  padding: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.seg span {
-  display: flex;
-  align-items: center;
-  padding: 0 11px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.seg span.on:first-child {
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-}
-.seg span.on:last-child {
-  color: #cdccd8;
-  background: var(--bg-elevated);
 }
 .btn-soft {
   height: 34px;
