@@ -6,12 +6,18 @@
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+use url::Url;
 
-use crate::error::EngineResult;
-use crate::exec::{lower_request, Credentials, VarScope};
-use crate::parse::{parse_document, Record};
-use crate::request::HttpClient;
-use crate::rule::{CollectStep, EntryPoint, Fanout, OutputSpec, Pagination, Rule, StepInputFrom};
+use crate::error::{EngineError, EngineResult};
+use crate::exec::{lower_request, Credentials, RequestConfig, VarScope};
+use crate::parse::{parse_document, select_first, Extraction, Record, SelectorExpr};
+use crate::request::{FetchRequest, HttpClient};
+use crate::rule::{
+    CollectStep, EntryPoint, Fanout, OutputSpec, PageCombine, Pagination, Rule, StepInputFrom,
+};
+
+/// 翻页安全上限,防止失控。
+const DEFAULT_MAX_PAGES: u32 = 50;
 
 /// 一轮采集的产物。
 #[derive(Debug, Clone, Serialize)]
@@ -121,32 +127,246 @@ fn plan_executions(
     }
 }
 
-/// 执行单次:降级 → 抓取 → 解析(+管线)。base_url 用响应 final_url 供 resolveUrl。
+/// 执行单次步骤:降级请求,按翻页策略抓取并解析。base_url 用响应 final_url 供 resolveUrl。
 async fn run_execution(
     client: &HttpClient,
     step: &CollectStep,
     scope: &VarScope,
-    defaults: Option<&crate::exec::RequestConfig>,
+    defaults: Option<&RequestConfig>,
     credentials: &Credentials,
 ) -> EngineResult<(Vec<Record>, Vec<String>)> {
-    let mut warnings = Vec::new();
     let request = lower_request(&step.request, scope, defaults, credentials)?;
-    let resp = client.fetch(&request).await?;
-
-    if let Some(pagination) = &step.pagination {
-        if !matches!(pagination, Pagination::None) {
-            warnings.push(format!("步骤 '{}' 翻页待实现(后续小步),仅取首页", step.id));
+    match &step.pagination {
+        None | Some(Pagination::None) => {
+            fetch_parse_once(client, &request, &step.parse, &step.id).await
+        }
+        Some(Pagination::PageParam {
+            param,
+            start,
+            step: page_step,
+            max_pages,
+            combine,
+        }) => {
+            paginate_param(
+                client,
+                &request,
+                &step.parse,
+                &step.id,
+                param,
+                start.unwrap_or(1),
+                page_step.unwrap_or(1),
+                max_pages.unwrap_or(DEFAULT_MAX_PAGES),
+                *combine,
+            )
+            .await
+        }
+        Some(Pagination::NextButton {
+            next,
+            stop_text,
+            max_pages,
+            combine,
+        }) => {
+            paginate_next(
+                client,
+                &request,
+                &step.parse,
+                &step.id,
+                next,
+                stop_text.as_deref(),
+                max_pages.unwrap_or(DEFAULT_MAX_PAGES),
+                *combine,
+            )
+            .await
+        }
+        Some(Pagination::Cursor { .. }) => {
+            let (recs, mut warnings) =
+                fetch_parse_once(client, &request, &step.parse, &step.id).await?;
+            warnings.push(format!(
+                "步骤 '{}' cursor 翻页待实现(phase-2),仅取首页",
+                step.id
+            ));
+            Ok((recs, warnings))
         }
     }
+}
 
-    let parsed = parse_document(&resp.body, &step.parse, Some(&resp.final_url))?;
-    warnings.extend(
-        parsed
-            .warnings
-            .into_iter()
-            .map(|w| format!("[{}] {w}", step.id)),
-    );
+/// 抓取一页并解析。
+async fn fetch_parse_once(
+    client: &HttpClient,
+    request: &FetchRequest,
+    parse: &crate::parse::ParseSpec,
+    step_id: &str,
+) -> EngineResult<(Vec<Record>, Vec<String>)> {
+    let resp = client.fetch(request).await?;
+    let parsed = parse_document(&resp.body, parse, Some(&resp.final_url))?;
+    let warnings = parsed
+        .warnings
+        .into_iter()
+        .map(|w| format!("[{step_id}] {w}"))
+        .collect();
     Ok((parsed.records, warnings))
+}
+
+/// pageParam 翻页:递增查询参数,空页或达上限即止。
+#[allow(clippy::too_many_arguments)]
+async fn paginate_param(
+    client: &HttpClient,
+    base: &FetchRequest,
+    parse: &crate::parse::ParseSpec,
+    step_id: &str,
+    param: &str,
+    start: i64,
+    page_step: i64,
+    max_pages: u32,
+    combine: Option<PageCombine>,
+) -> EngineResult<(Vec<Record>, Vec<String>)> {
+    let mut warnings = Vec::new();
+    let mut pages: Vec<Vec<Record>> = Vec::new();
+    let mut page = start;
+    for _ in 0..max_pages {
+        let url = set_query_param(&base.url, param, &page.to_string())?;
+        let mut req = base.clone();
+        req.url = url;
+        let resp = client.fetch(&req).await?;
+        let parsed = parse_document(&resp.body, parse, Some(&resp.final_url))?;
+        warnings.extend(
+            parsed
+                .warnings
+                .into_iter()
+                .map(|w| format!("[{step_id}] {w}")),
+        );
+        let empty = parsed.records.is_empty();
+        pages.push(parsed.records);
+        if empty {
+            break;
+        }
+        page += page_step;
+    }
+    Ok((combine_pages(pages, combine), warnings))
+}
+
+/// nextButton 翻页:跟随页内"下一页"链接;无链接 / 命中 stopText / 达上限即止。
+#[allow(clippy::too_many_arguments)]
+async fn paginate_next(
+    client: &HttpClient,
+    base: &FetchRequest,
+    parse: &crate::parse::ParseSpec,
+    step_id: &str,
+    next_sel: &SelectorExpr,
+    stop_text: Option<&str>,
+    max_pages: u32,
+    combine: Option<PageCombine>,
+) -> EngineResult<(Vec<Record>, Vec<String>)> {
+    let mut warnings = Vec::new();
+    let mut pages: Vec<Vec<Record>> = Vec::new();
+    let mut req = base.clone();
+    for _ in 0..max_pages {
+        let resp = client.fetch(&req).await?;
+        let final_url = resp.final_url.clone();
+        let parsed = parse_document(&resp.body, parse, Some(&final_url))?;
+        warnings.extend(
+            parsed
+                .warnings
+                .into_iter()
+                .map(|w| format!("[{step_id}] {w}")),
+        );
+        pages.push(parsed.records);
+        match next_link(&resp.body, next_sel, &final_url, stop_text) {
+            Some(url) => {
+                let mut next_req = base.clone();
+                next_req.url = url;
+                req = next_req;
+            }
+            None => break,
+        }
+    }
+    Ok((combine_pages(pages, combine), warnings))
+}
+
+/// 从页面解析下一页链接;stopText 命中(next 元素文本含之)则视为到底,返回 None。
+fn next_link(
+    html: &str,
+    next_sel: &SelectorExpr,
+    base_url: &str,
+    stop_text: Option<&str>,
+) -> Option<String> {
+    if let Some(stop) = stop_text {
+        let mut text_sel = next_sel.clone();
+        text_sel.extract = Extraction::Text;
+        text_sel.pipeline = Vec::new();
+        let text = select_first(html, &text_sel, None).unwrap_or_default();
+        if text.contains(stop) {
+            return None;
+        }
+    }
+    let href = select_first(html, next_sel, Some(base_url))?;
+    if href.trim().is_empty() {
+        return None;
+    }
+    Some(resolve_against(base_url, &href))
+}
+
+/// 相对地址按 base 解析为绝对;已是绝对则原样。
+fn resolve_against(base: &str, href: &str) -> String {
+    if let Ok(u) = Url::parse(href) {
+        if u.has_host() {
+            return href.to_string();
+        }
+    }
+    match Url::parse(base).and_then(|b| b.join(href)) {
+        Ok(joined) => joined.to_string(),
+        Err(_) => href.to_string(),
+    }
+}
+
+/// 合并多页记录:appendRows 平铺所有行;appendContent 合并为单记录、各字段按 \n 拼接。
+fn combine_pages(pages: Vec<Vec<Record>>, combine: Option<PageCombine>) -> Vec<Record> {
+    match combine.unwrap_or(PageCombine::AppendRows) {
+        PageCombine::AppendRows => pages.into_iter().flatten().collect(),
+        PageCombine::AppendContent => {
+            let all: Vec<Record> = pages.into_iter().flatten().collect();
+            if all.is_empty() {
+                return Vec::new();
+            }
+            let mut keys: Vec<String> = Vec::new();
+            for record in &all {
+                for key in record.keys() {
+                    if !keys.contains(key) {
+                        keys.push(key.clone());
+                    }
+                }
+            }
+            let mut merged = Record::new();
+            for key in keys {
+                let joined: Vec<String> = all
+                    .iter()
+                    .filter_map(|r| r.get(&key).cloned().flatten())
+                    .collect();
+                merged.insert(key, (!joined.is_empty()).then(|| joined.join("\n")));
+            }
+            vec![merged]
+        }
+    }
+}
+
+/// 设置/替换 URL 的查询参数。
+fn set_query_param(url_str: &str, key: &str, val: &str) -> EngineResult<String> {
+    let mut url = Url::parse(url_str)
+        .map_err(|e| EngineError::InvalidRequest(format!("URL 解析失败: {e}")))?;
+    let existing: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != key)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.clear();
+        for (k, v) in &existing {
+            qp.append_pair(k, v);
+        }
+        qp.append_pair(key, val);
+    }
+    Ok(url.to_string())
 }
 
 /// 把记录的非空字段按键绑入作用域(供下游 ###field### 解析)。
@@ -306,5 +526,51 @@ mod tests {
             limit: None,
             content_filters: Vec::new(),
         }
+    }
+
+    #[test]
+    fn set_query_param_adds_and_replaces() {
+        let added = set_query_param("http://x.com/list?kw=a", "page", "2").unwrap();
+        assert!(added.contains("kw=a"));
+        assert!(added.contains("page=2"));
+        let replaced = set_query_param("http://x.com/list?page=1&kw=a", "page", "3").unwrap();
+        assert!(replaced.contains("page=3"));
+        assert!(!replaced.contains("page=1"));
+    }
+
+    #[test]
+    fn resolve_against_handles_relative_and_absolute() {
+        assert_eq!(
+            resolve_against("http://x.com/a/b", "c.html"),
+            "http://x.com/a/c.html"
+        );
+        assert_eq!(
+            resolve_against("http://x.com/a/", "http://y.com/z"),
+            "http://y.com/z"
+        );
+    }
+
+    #[test]
+    fn combine_append_content_merges_into_one_record() {
+        let pages = vec![
+            vec![rec(&[("content", "第一页正文")])],
+            vec![rec(&[("content", "第二页正文")])],
+        ];
+        let merged = combine_pages(pages, Some(PageCombine::AppendContent));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0]["content"].as_deref(),
+            Some("第一页正文\n第二页正文")
+        );
+    }
+
+    #[test]
+    fn combine_append_rows_flattens() {
+        let pages = vec![
+            vec![rec(&[("t", "a")]), rec(&[("t", "b")])],
+            vec![rec(&[("t", "c")])],
+        ];
+        let rows = combine_pages(pages, Some(PageCombine::AppendRows));
+        assert_eq!(rows.len(), 3);
     }
 }

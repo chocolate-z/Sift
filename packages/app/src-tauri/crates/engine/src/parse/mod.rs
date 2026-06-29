@@ -241,6 +241,19 @@ pub fn parse_html(
     Ok(ParseOutput { records, warnings })
 }
 
+/// 在 HTML 中按选择器取首个匹配值(extract + pipeline 后)。供翻页等取单值。
+pub fn select_first(html: &str, selector: &SelectorExpr, base_url: Option<&str>) -> Option<String> {
+    use scraper::Html;
+    let doc = Html::parse_document(html);
+    let root = doc.root_element();
+    let ctx = PipelineContext {
+        base_url: base_url.map(str::to_string),
+    };
+    let mut warnings = Vec::new();
+    let raw = css::select_values(root, selector, &mut warnings);
+    finalize(raw, &selector.pipeline, &ctx, &mut warnings)
+}
+
 // ---------------------------------------------------------------------------
 // JSONPath / JSON
 // ---------------------------------------------------------------------------

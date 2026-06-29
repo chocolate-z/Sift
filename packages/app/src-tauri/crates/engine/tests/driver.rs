@@ -132,3 +132,105 @@ async fn missing_keyword_warns_but_runs() {
         .unwrap();
     assert!(out.warnings.iter().any(|w| w.contains("关键词")));
 }
+
+#[tokio::test]
+async fn page_param_pagination_accumulates_rows() {
+    let server = MockServer::start().await;
+    for (pg, body) in [
+        (1, r#"{"data":{"list":[{"title":"A"},{"title":"B"}]}}"#),
+        (2, r#"{"data":{"list":[{"title":"C"}]}}"#),
+        (3, r#"{"data":{"list":[]}}"#),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/list"))
+            .and(query_param("page", pg.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+    }
+
+    let rule_json = format!(
+        r#"{{
+        "irVersion": 1,
+        "meta": {{ "id": "pg", "name": "翻页", "origin": "handwritten", "sourceType": "api" }},
+        "entry": {{ "kind": "none" }},
+        "steps": [{{
+            "id": "list", "name": "列表",
+            "request": {{ "url": {{ "kind": "template", "template": "{base}/list" }} }},
+            "parse": {{
+                "shape": "list",
+                "list": {{ "container": {{ "engine": "jsonpath", "expr": "data.list" }} }},
+                "fields": {{ "title": {{ "selector": {{ "engine": "jsonpath", "expr": "key$$title" }} }} }}
+            }},
+            "pagination": {{ "kind": "pageParam", "param": "page", "start": 1, "maxPages": 5 }}
+        }}],
+        "output": {{ "format": "records", "columns": [{{ "name": "标题", "fromField": "title", "fromStep": "list" }}] }}
+    }}"#,
+        base = server.uri()
+    );
+    let rule: Rule = serde_json::from_str(&rule_json).unwrap();
+    let client = HttpClient::unlimited().unwrap();
+    let out = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
+        .await
+        .unwrap();
+    // 第 1 页 2 行 + 第 2 页 1 行,第 3 页空 → 停;共 3 行。
+    assert_eq!(out.records.len(), 3, "warnings: {:?}", out.warnings);
+    assert_eq!(out.records[0]["标题"].as_deref(), Some("A"));
+    assert_eq!(out.records[2]["标题"].as_deref(), Some("C"));
+}
+
+#[tokio::test]
+async fn next_button_pagination_follows_links() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body>
+                <div class="row"><span class="t">A</span></div>
+                <div class="row"><span class="t">B</span></div>
+                <a class="next" href="/p2">下一页</a>
+            </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/p2"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><div class="row"><span class="t">C</span></div></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let rule_json = format!(
+        r#"{{
+        "irVersion": 1,
+        "meta": {{ "id": "nb", "name": "翻页", "origin": "book-source", "sourceType": "web" }},
+        "entry": {{ "kind": "none" }},
+        "steps": [{{
+            "id": "pages", "name": "翻页",
+            "request": {{ "url": {{ "kind": "static", "url": "{base}/p1" }} }},
+            "parse": {{
+                "shape": "list",
+                "list": {{ "container": {{ "engine": "css", "expr": ".row" }} }},
+                "fields": {{ "title": {{ "selector": {{ "engine": "css", "expr": ".t" }} }} }}
+            }},
+            "pagination": {{
+                "kind": "nextButton",
+                "next": {{ "engine": "css", "expr": ".next", "extract": {{ "mode": "attr", "name": "href" }} }},
+                "maxPages": 5
+            }}
+        }}],
+        "output": {{ "format": "records", "columns": [{{ "name": "标题", "fromField": "title", "fromStep": "pages" }}] }}
+    }}"#,
+        base = server.uri()
+    );
+    let rule: Rule = serde_json::from_str(&rule_json).unwrap();
+    let client = HttpClient::unlimited().unwrap();
+    let out = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
+        .await
+        .unwrap();
+    // p1 跟随 .next → p2,p2 无 .next → 停;共 A/B/C 三行。
+    assert_eq!(out.records.len(), 3, "warnings: {:?}", out.warnings);
+    assert_eq!(out.records[0]["标题"].as_deref(), Some("A"));
+    assert_eq!(out.records[2]["标题"].as_deref(), Some("C"));
+}
