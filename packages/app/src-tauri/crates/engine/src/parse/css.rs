@@ -81,3 +81,15 @@ pub(super) fn extract(el: ElementRef, ex: &Extraction) -> Option<String> {
         Extraction::Html => Some(el.inner_html()),
     }
 }
+
+/// 在 `scope` 内解析字段选择器,对全部命中元素取值(供管线后处理 / join)。
+pub(super) fn select_values(
+    scope: ElementRef,
+    sel: &SelectorExpr,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    select_field(scope, sel, warnings)
+        .iter()
+        .filter_map(|el| extract(*el, &sel.extract))
+        .collect()
+}

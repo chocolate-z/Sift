@@ -8,13 +8,17 @@
 //!   列表/单页、fallback 备选、文本/属性/html 取值。XPath 待后续小步。
 //! - 【管线层】值后处理:regex 清洗/抽取、base64 解码、urlReplace、resolveUrl、
 //!   trim、join;脚本 op 留待 phase-3 沙箱。
+//! - 【执行层】RequestConfig 降级:占位符模板替换、defaults 合并、凭据→Cookie。
+//!   多步驱动(变量穿线/fanout/翻页/输出)在此之上构建(后续小步)。
 
 pub mod error;
+pub mod exec;
 pub mod parse;
 pub mod pipeline;
 pub mod request;
 
 pub use error::{EngineError, EngineResult};
+pub use exec::{lower_request, substitute, Credentials, RequestConfig, UrlSource, VarScope};
 pub use parse::{
     ContentFilter, Extraction, FieldRule, ListSpec, ParseOutput, ParseSpec, Record, SelectorExpr,
     Shape,

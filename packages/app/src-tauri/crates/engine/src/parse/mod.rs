@@ -2,8 +2,9 @@
 //! 到对应引擎(parser-plugin 接缝)。本步覆盖 **CSS(含伪类)+ JSONPath**;
 //! XPath 两个真实源均未使用,作为解析层后续小步实现(见 `parse_document`)。
 //!
-//! 字段与 `@sift/core-ir` 的 `ParseSpec` 对齐(camelCase)。`SelectorExpr.pipeline`
-//! 属管线层职责,本层不建模(serde 默认忽略未知字段)。
+//! 字段抽取后按 `SelectorExpr.pipeline` 跑管线层(regex/base64/resolveUrl…),
+//! 故解析产出的是**最终值**;`resolveUrl` 的基址由 `base_url`(响应 final_url)给入。
+//! 字段与 `@sift/core-ir` 的 `ParseSpec` 对齐(camelCase)。
 
 mod css;
 pub mod json;
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{EngineError, EngineResult};
+use crate::pipeline::{apply_pipeline, PipelineContext, PipelineOp};
 
 /// 一条记录:友好字段名 → 值(None 表示未命中)。
 pub type Record = BTreeMap<String, Option<String>>;
@@ -71,6 +73,9 @@ pub struct SelectorExpr {
     /// 取值方式:文本(默认)/ 属性 / html。
     #[serde(default)]
     pub extract: Extraction,
+    /// 取值后处理管线(regex/base64/resolveUrl…)。多值经 join 可折叠为一串。
+    #[serde(default)]
+    pub pipeline: Vec<PipelineOp>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -97,7 +102,7 @@ pub struct FieldRule {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentFilter {
-    /// 已 Base64 解码的模式(应用归管线层 / 正文清洗,本层仅保留以兼容 IR)。
+    /// 已 Base64 解码的模式(由翻译器转为字段管线的 regex op;本层仅保留以兼容 IR)。
     pub pattern: String,
     #[serde(default)]
     pub is_regex: bool,
@@ -119,21 +124,40 @@ fn dominant_engine(spec: &ParseSpec) -> &str {
         .unwrap_or("css")
 }
 
-/// 按主引擎自动分派 HTML / JSON。
-pub fn parse_document(body: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
+/// 按主引擎自动分派 HTML / JSON。`base_url` 供管线 resolveUrl 作基址。
+pub fn parse_document(
+    body: &str,
+    spec: &ParseSpec,
+    base_url: Option<&str>,
+) -> EngineResult<ParseOutput> {
     match dominant_engine(spec) {
-        "jsonpath" => parse_json(body, spec),
+        "jsonpath" => parse_json(body, spec, base_url),
         "xpath" => Ok(ParseOutput {
             records: Vec::new(),
             warnings: vec!["XPath 引擎待实现(解析层后续步骤),本步覆盖 CSS + JSONPath".to_string()],
         }),
-        _ => parse_html(body, spec),
+        _ => parse_html(body, spec, base_url),
     }
 }
 
 // ---------------------------------------------------------------------------
-// 必填校验(页/列表统一,构建后一次性统计,避免逐项刷屏)
+// 公共:跑管线、必填校验
 // ---------------------------------------------------------------------------
+
+/// 原始多值 → 跑管线 → 取首项。空集视为字段缺失(None)。
+fn finalize(
+    raw: Vec<String>,
+    pipeline: &[PipelineOp],
+    ctx: &PipelineContext,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    apply_pipeline(raw, pipeline, ctx, warnings)
+        .into_iter()
+        .next()
+}
 
 fn check_required(spec: &ParseSpec, records: &[Record], warnings: &mut Vec<String>) {
     for (key, field) in &spec.fields {
@@ -161,10 +185,17 @@ fn check_required(spec: &ParseSpec, records: &[Record], warnings: &mut Vec<Strin
 // CSS / HTML
 // ---------------------------------------------------------------------------
 
-pub fn parse_html(html: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
+pub fn parse_html(
+    html: &str,
+    spec: &ParseSpec,
+    base_url: Option<&str>,
+) -> EngineResult<ParseOutput> {
     use scraper::Html;
     let doc = Html::parse_document(html);
     let root = doc.root_element();
+    let ctx = PipelineContext {
+        base_url: base_url.map(str::to_string),
+    };
     let mut warnings = Vec::new();
     let mut records: Vec<Record> = Vec::new();
 
@@ -172,10 +203,8 @@ pub fn parse_html(html: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
         Shape::Page => {
             let mut record = Record::new();
             for (key, field) in &spec.fields {
-                let matched = css::select_field(root, &field.selector, &mut warnings);
-                let value = matched
-                    .first()
-                    .and_then(|el| css::extract(*el, &field.selector.extract));
+                let raw = css::select_values(root, &field.selector, &mut warnings);
+                let value = finalize(raw, &field.selector.pipeline, &ctx, &mut warnings);
                 record.insert(key.clone(), value);
             }
             records.push(record);
@@ -199,10 +228,8 @@ pub fn parse_html(html: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
             for item in &items {
                 let mut record = Record::new();
                 for (key, field) in &spec.fields {
-                    let matched = css::select_field(*item, &field.selector, &mut warnings);
-                    let value = matched
-                        .first()
-                        .and_then(|el| css::extract(*el, &field.selector.extract));
+                    let raw = css::select_values(*item, &field.selector, &mut warnings);
+                    let value = finalize(raw, &field.selector.pipeline, &ctx, &mut warnings);
                     record.insert(key.clone(), value);
                 }
                 records.push(record);
@@ -218,23 +245,21 @@ pub fn parse_html(html: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
 // JSONPath / JSON
 // ---------------------------------------------------------------------------
 
-pub fn parse_json(body: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
+pub fn parse_json(
+    body: &str,
+    spec: &ParseSpec,
+    base_url: Option<&str>,
+) -> EngineResult<ParseOutput> {
     let root: Value =
         serde_json::from_str(body).map_err(|e| EngineError::Parse(format!("JSON 非法: {e}")))?;
+    let ctx = PipelineContext {
+        base_url: base_url.map(str::to_string),
+    };
     let mut warnings = Vec::new();
     let mut records: Vec<Record> = Vec::new();
 
-    let build = |scope: &Value| -> Record {
-        let mut record = Record::new();
-        for (key, field) in &spec.fields {
-            let value = json::resolve(scope, &field.selector.expr).and_then(json::value_to_string);
-            record.insert(key.clone(), value);
-        }
-        record
-    };
-
     match spec.shape {
-        Shape::Page => records.push(build(&root)),
+        Shape::Page => records.push(json_record(&root, spec, &ctx, &mut warnings)),
         Shape::List => {
             let list = spec
                 .list
@@ -244,7 +269,7 @@ pub fn parse_json(body: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
                 Some(arr) => {
                     let take = spec.limit.unwrap_or(arr.len()).min(arr.len());
                     for el in &arr[..take] {
-                        records.push(build(el));
+                        records.push(json_record(el, spec, &ctx, &mut warnings));
                     }
                 }
                 None => warnings.push(format!("列表容器路径未解析到数组: {}", list.container.expr)),
@@ -254,4 +279,22 @@ pub fn parse_json(body: &str, spec: &ParseSpec) -> EngineResult<ParseOutput> {
 
     check_required(spec, &records, &mut warnings);
     Ok(ParseOutput { records, warnings })
+}
+
+fn json_record(
+    scope: &Value,
+    spec: &ParseSpec,
+    ctx: &PipelineContext,
+    warnings: &mut Vec<String>,
+) -> Record {
+    let mut record = Record::new();
+    for (key, field) in &spec.fields {
+        let raw: Vec<String> = json::resolve(scope, &field.selector.expr)
+            .and_then(json::value_to_string)
+            .into_iter()
+            .collect();
+        let value = finalize(raw, &field.selector.pipeline, ctx, warnings);
+        record.insert(key.clone(), value);
+    }
+    record
 }

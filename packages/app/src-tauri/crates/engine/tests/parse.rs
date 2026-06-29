@@ -3,7 +3,7 @@
 //! JSONPath 列表/页 + key$$ 归一、limit、必填告警。
 
 use sift_engine::parse::{parse_document, parse_html, parse_json};
-use sift_engine::{Extraction, FieldRule, ListSpec, ParseSpec, SelectorExpr, Shape};
+use sift_engine::{Extraction, FieldRule, ListSpec, ParseSpec, PipelineOp, SelectorExpr, Shape};
 use std::collections::BTreeMap;
 
 fn css(expr: &str) -> SelectorExpr {
@@ -12,6 +12,7 @@ fn css(expr: &str) -> SelectorExpr {
         expr: expr.into(),
         fallbacks: Vec::new(),
         extract: Extraction::Text,
+        pipeline: Vec::new(),
     }
 }
 
@@ -21,6 +22,7 @@ fn css_attr(expr: &str, name: &str) -> SelectorExpr {
         expr: expr.into(),
         fallbacks: Vec::new(),
         extract: Extraction::Attr { name: name.into() },
+        pipeline: Vec::new(),
     }
 }
 
@@ -30,6 +32,7 @@ fn jpath(expr: &str) -> SelectorExpr {
         expr: expr.into(),
         fallbacks: Vec::new(),
         extract: Extraction::Text,
+        pipeline: Vec::new(),
     }
 }
 
@@ -72,7 +75,7 @@ fn parses_jiugangbi_search_list() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_html(JIUGANGBI_SEARCH, &spec).unwrap();
+    let out = parse_html(JIUGANGBI_SEARCH, &spec, None).unwrap();
     assert_eq!(out.records.len(), 3);
     assert_eq!(out.records[0]["name"].as_deref(), Some("剑来"));
     assert_eq!(out.records[0]["author"].as_deref(), Some("烽火戏诸侯"));
@@ -96,7 +99,7 @@ fn limit_truncates_list() {
         limit: Some(2),
         content_filters: Vec::new(),
     };
-    let out = parse_html(JIUGANGBI_SEARCH, &spec).unwrap();
+    let out = parse_html(JIUGANGBI_SEARCH, &spec, None).unwrap();
     assert_eq!(out.records.len(), 2);
 }
 
@@ -116,12 +119,13 @@ fn fallback_picks_second_when_first_misses() {
                 expr: "p.does-not-exist a,p.p1 a".into(),
                 fallbacks: Vec::new(),
                 extract: Extraction::Text,
+                pipeline: Vec::new(),
             }),
         )]),
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_html(JIUGANGBI_SEARCH, &spec).unwrap();
+    let out = parse_html(JIUGANGBI_SEARCH, &spec, None).unwrap();
     assert_eq!(out.records[0]["name"].as_deref(), Some("剑来"));
 }
 
@@ -153,7 +157,7 @@ fn gt_pseudo_skips_leading_chapters() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_html(&html, &spec).unwrap();
+    let out = parse_html(&html, &spec, None).unwrap();
     assert_eq!(out.records.len(), 3);
     assert_eq!(out.records[0]["title"].as_deref(), Some("第9章"));
     assert_eq!(out.records[0]["url"].as_deref(), Some("/c9"));
@@ -175,7 +179,7 @@ fn eq_pseudo_selects_single() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_html(html, &spec).unwrap();
+    let out = parse_html(html, &spec, None).unwrap();
     assert_eq!(out.records[0]["title"].as_deref(), Some("二"));
 }
 
@@ -195,7 +199,7 @@ fn required_missing_emits_warning() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_html("<html><body></body></html>", &spec).unwrap();
+    let out = parse_html("<html><body></body></html>", &spec, None).unwrap();
     assert_eq!(out.warnings.len(), 1);
     assert!(out.warnings[0].contains("title"));
 }
@@ -228,7 +232,7 @@ fn parses_qimao_json_list_with_key_prefix() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_json(QIMAO_SEARCH, &spec).unwrap();
+    let out = parse_json(QIMAO_SEARCH, &spec, None).unwrap();
     assert_eq!(out.records.len(), 2);
     assert_eq!(out.records[0]["name"].as_deref(), Some("剑来"));
     assert_eq!(out.records[0]["book_id"].as_deref(), Some("111"));
@@ -248,7 +252,7 @@ fn parses_json_page_with_dotted_index() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_json(QIMAO_SEARCH, &spec).unwrap();
+    let out = parse_json(QIMAO_SEARCH, &spec, None).unwrap();
     assert_eq!(out.records[0]["first_title"].as_deref(), Some("剑来"));
 }
 
@@ -264,7 +268,7 @@ fn dispatch_routes_by_engine() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_document(QIMAO_SEARCH, &json_spec).unwrap();
+    let out = parse_document(QIMAO_SEARCH, &json_spec, None).unwrap();
     assert_eq!(out.records.len(), 2);
 
     let css_spec = ParseSpec {
@@ -277,7 +281,7 @@ fn dispatch_routes_by_engine() {
         limit: None,
         content_filters: Vec::new(),
     };
-    let out = parse_document(JIUGANGBI_SEARCH, &css_spec).unwrap();
+    let out = parse_document(JIUGANGBI_SEARCH, &css_spec, None).unwrap();
     assert_eq!(out.records.len(), 3);
 }
 
@@ -302,4 +306,46 @@ fn deserializes_camel_case_parse_spec() {
         Extraction::Attr { name } => assert_eq!(name, "href"),
         _ => panic!("expected attr extraction"),
     }
+}
+
+#[test]
+fn field_pipeline_resolves_relative_url_with_base() {
+    // 抽取相对 href,经字段管线 resolveUrl + 解析层 base_url 转绝对。
+    let html = r#"<html><body><div class="m"><a href="ch/1.html">章一</a></div></body></html>"#;
+    let mut selector = css_attr(".m a", "href");
+    selector.pipeline = vec![PipelineOp::ResolveUrl { base: None }];
+    let spec = ParseSpec {
+        shape: Shape::Page,
+        list: None,
+        fields: fields(vec![("url", field(selector))]),
+        limit: None,
+        content_filters: Vec::new(),
+    };
+    let out = parse_html(html, &spec, Some("http://www.jiugangbi.com/book/9/")).unwrap();
+    assert_eq!(
+        out.records[0]["url"].as_deref(),
+        Some("http://www.jiugangbi.com/book/9/ch/1.html")
+    );
+}
+
+#[test]
+fn field_pipeline_regex_cleans_text() {
+    // 正文字段经字段管线 regex 清洗广告。
+    let html = r#"<html><body><p class="t">正文(广告)结束</p></body></html>"#;
+    let mut selector = css("p.t");
+    selector.pipeline = vec![PipelineOp::Regex {
+        pattern: r"\(.+?\)".into(),
+        replace: Some(String::new()),
+        flags: None,
+        group: None,
+    }];
+    let spec = ParseSpec {
+        shape: Shape::Page,
+        list: None,
+        fields: fields(vec![("body", field(selector))]),
+        limit: None,
+        content_filters: Vec::new(),
+    };
+    let out = parse_html(html, &spec, None).unwrap();
+    assert_eq!(out.records[0]["body"].as_deref(), Some("正文结束"));
 }
