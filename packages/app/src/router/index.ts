@@ -13,6 +13,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/RuleImportView.vue'),
     meta: { title: '规则导入' }
   },
+  // 粘贴规则现场解析(非导航,从规则导入进入)
+  {
+    path: '/import/paste',
+    name: 'import-paste',
+    component: () => import('@/views/RulePasteView.vue'),
+    meta: { title: '粘贴规则' }
+  },
   {
     path: '/tasks',
     name: 'tasks',
