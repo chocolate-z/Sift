@@ -83,11 +83,16 @@ pub(super) fn extract(el: ElementRef, ex: &Extraction) -> Option<String> {
 }
 
 /// 在 `scope` 内解析字段选择器,对全部命中元素取值(供管线后处理 / join)。
+/// 空选择器(expr 空且无 fallbacks)= 取 `scope` 元素**自身**的值——用于列表项本身即
+/// 目标的情形(如旧钢笔 book_menu `li:gt(8) a` 直取每个 <a> 的 href/text)。
 pub(super) fn select_values(
     scope: ElementRef,
     sel: &SelectorExpr,
     warnings: &mut Vec<String>,
 ) -> Vec<String> {
+    if sel.expr.trim().is_empty() && sel.fallbacks.is_empty() {
+        return extract(scope, &sel.extract).into_iter().collect();
+    }
     select_field(scope, sel, warnings)
         .iter()
         .filter_map(|el| extract(*el, &sel.extract))

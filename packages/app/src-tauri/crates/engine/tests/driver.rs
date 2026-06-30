@@ -180,6 +180,101 @@ async fn page_param_pagination_accumulates_rows() {
 }
 
 #[tokio::test]
+async fn web_catalog_chain_extracts_chapters_via_self_selector() {
+    // 旧钢笔形态:搜索(HTML 书单,抽 book_url)→ 目录(fanout,book_menu 直取章节链接)。
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"<html><body><div class="list">
+                <div class="row"><span class="t">剑来</span><a class="bk" href="{base}/book/1">详情</a></div>
+                <div class="row"><span class="t">大奉打更人</span><a class="bk" href="{base}/book/2">详情</a></div>
+            </div></body></html>"#,
+            base = server.uri()
+        )))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/book/1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><div class="menu"><a href="/ch/1">第一章</a><a href="/ch/2">第二章</a></div></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/book/2"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><div class="menu"><a href="/ch/9">楔子</a></div></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let rule_json = format!(
+        r####"{{
+        "irVersion": 1,
+        "meta": {{ "id": "jgb", "name": "网页源", "origin": "book-source", "sourceType": "web" }},
+        "entry": {{ "kind": "keyword", "param": "kw" }},
+        "steps": [
+            {{
+                "id": "search", "name": "搜索",
+                "request": {{ "url": {{ "kind": "template", "template": "{base}/search?kw=###kw###" }} }},
+                "parse": {{
+                    "shape": "list",
+                    "list": {{ "container": {{ "engine": "css", "expr": ".list .row" }} }},
+                    "fields": {{
+                        "name": {{ "selector": {{ "engine": "css", "expr": ".t" }} }},
+                        "book_url": {{ "selector": {{ "engine": "css", "expr": "a.bk", "extract": {{ "mode": "attr", "name": "href" }} }} }}
+                    }}
+                }},
+                "fanout": {{ "kind": "once" }}
+            }},
+            {{
+                "id": "catalog", "name": "目录",
+                "request": {{ "url": {{ "kind": "template", "template": "###book_url###" }} }},
+                "parse": {{
+                    "shape": "list",
+                    "list": {{ "container": {{ "engine": "css", "expr": ".menu a" }} }},
+                    "fields": {{
+                        "chapter_name": {{ "selector": {{ "engine": "css", "expr": "" }} }},
+                        "chapter_url": {{ "selector": {{ "engine": "css", "expr": "", "extract": {{ "mode": "attr", "name": "href" }}, "pipeline": [{{ "op": "resolveUrl" }}] }} }}
+                    }}
+                }},
+                "fanout": {{ "kind": "perItem", "overStep": "search" }}
+            }}
+        ],
+        "output": {{
+            "format": "records",
+            "columns": [
+                {{ "name": "书名", "fromField": "name", "fromStep": "search" }},
+                {{ "name": "章节", "fromField": "chapter_name", "fromStep": "catalog" }},
+                {{ "name": "链接", "fromField": "chapter_url", "fromStep": "catalog" }}
+            ]
+        }}
+    }}"####,
+        base = server.uri()
+    );
+    let rule: Rule = serde_json::from_str(&rule_json).unwrap();
+    let client = HttpClient::unlimited().unwrap();
+    let mut inputs = VarScope::new();
+    inputs.insert("kw".into(), "剑来".into());
+    let out = run_rule(&client, &rule, inputs, &BTreeMap::new())
+        .await
+        .unwrap();
+
+    // 书1 两章 + 书2 一章 = 3 行;书名经 fanout 下沉,章节经空选择器自取。
+    assert_eq!(out.records.len(), 3, "warnings: {:?}", out.warnings);
+    assert_eq!(out.records[0]["书名"].as_deref(), Some("剑来"));
+    assert_eq!(out.records[0]["章节"].as_deref(), Some("第一章"));
+    // 相对 href 经 resolveUrl 按目录页 final_url 解析为绝对。
+    assert_eq!(
+        out.records[0]["链接"].as_deref(),
+        Some(format!("{}/ch/1", server.uri()).as_str())
+    );
+    assert_eq!(out.records[2]["书名"].as_deref(), Some("大奉打更人"));
+    assert_eq!(out.records[2]["章节"].as_deref(), Some("楔子"));
+}
+
+#[tokio::test]
 async fn next_button_pagination_follows_links() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

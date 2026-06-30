@@ -329,6 +329,33 @@ fn field_pipeline_resolves_relative_url_with_base() {
 }
 
 #[test]
+fn empty_selector_extracts_list_item_itself() {
+    // 容器直接选到 <a>(旧钢笔 book_menu 形态),字段用空选择器取每项自身的 href/text。
+    let html = r#"<html><body><div class="menu">
+        <a href="/c1">第一章</a>
+        <a href="/c2">第二章</a>
+    </div></body></html>"#;
+    let spec = ParseSpec {
+        shape: Shape::List,
+        list: Some(ListSpec {
+            container: css(".menu a"),
+            item: None,
+        }),
+        fields: fields(vec![
+            ("url", field(css_attr("", "href"))),
+            ("title", field(css(""))),
+        ]),
+        limit: None,
+        content_filters: Vec::new(),
+    };
+    let out = parse_html(html, &spec, None).unwrap();
+    assert_eq!(out.records.len(), 2);
+    assert_eq!(out.records[0]["url"].as_deref(), Some("/c1"));
+    assert_eq!(out.records[0]["title"].as_deref(), Some("第一章"));
+    assert_eq!(out.records[1]["url"].as_deref(), Some("/c2"));
+}
+
+#[test]
 fn field_pipeline_regex_cleans_text() {
     // 正文字段经字段管线 regex 清洗广告。
     let html = r#"<html><body><p class="t">正文(广告)结束</p></body></html>"#;
