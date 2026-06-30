@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DropdownMenuContent,
@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
+import { downloadText, toCsv, toJson, toTxt } from '@/utils/export'
 
 const router = useRouter()
 const ds = useDatasetStore()
@@ -65,6 +66,35 @@ function downloadSelected() {
   if (selectedCount.value === 0) return
   router.push('/downloads')
 }
+
+// 导出当前数据集。CSV/JSON/TXT 真导出;Excel/EPUB 待实现。仅真实数据(跑过引擎)可导。
+const exportMsg = ref<string | null>(null)
+let exportTimer: ReturnType<typeof setTimeout> | undefined
+function flashExport(m: string) {
+  exportMsg.value = m
+  if (exportTimer) clearTimeout(exportTimer)
+  exportTimer = setTimeout(() => (exportMsg.value = null), 2500)
+}
+function doExport(format: string) {
+  exportFormat.value = format
+  if (!showReal.value) return
+  const safe = (ds.sourceName || 'sift-export').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40)
+  try {
+    // CSV 前置 BOM(U+FEFF),Excel 才能正确识别 UTF-8 中文。
+    if (format === 'CSV')
+      downloadText(`${safe}.csv`, String.fromCharCode(0xfeff) + toCsv(ds.columns, ds.rows), 'text/csv;charset=utf-8')
+    else if (format === 'JSON')
+      downloadText(`${safe}.json`, toJson(ds.columns, ds.rows), 'application/json;charset=utf-8')
+    else if (format === 'TXT') downloadText(`${safe}.txt`, toTxt(ds.columns, ds.rows), 'text/plain;charset=utf-8')
+    else return flashExport(`${format} 导出待实现,可先用 CSV / JSON / TXT`)
+    flashExport(`已导出 ${format} · ${ds.rows.length} 条`)
+  } catch (e) {
+    flashExport(`导出失败:${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+onBeforeUnmount(() => {
+  if (exportTimer) clearTimeout(exportTimer)
+})
 </script>
 
 <template>
@@ -128,7 +158,7 @@ function downloadSelected() {
                   :key="f"
                   class="dp-menu-item"
                   :class="{ active: exportFormat === f }"
-                  @select="exportFormat = f">
+                  @select="doExport(f)">
                   {{ f }}
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -157,9 +187,10 @@ function downloadSelected() {
           :key="f"
           class="fmt-pill"
           :class="{ active: exportFormat === f }"
-          @click="exportFormat = f">
+          @click="doExport(f)">
           {{ f }}
         </span>
+        <span v-if="exportMsg" class="export-msg">{{ exportMsg }}</span>
       </div>
     </header>
 
@@ -413,8 +444,14 @@ function downloadSelected() {
 /* 格式 pill */
 .formats {
   display: flex;
+  align-items: center;
   gap: 7px;
   margin-top: 11px;
+}
+.export-msg {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--success, #2dd4bf);
 }
 .fmt-pill {
   font-size: 11px;
