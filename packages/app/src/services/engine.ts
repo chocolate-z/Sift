@@ -3,11 +3,25 @@
 
 import type { Rule } from '@sift/core-ir'
 
-/** run_rule 返回:友好列记录 + 每步原始记录 + 告警(与 Rust RunOutput camelCase 对齐)。 */
+/** 一步执行轨迹(调试台逐步可视)。 */
+export interface StepTrace {
+  stepId: string
+  label: string
+  requestUrl: string
+  httpStatus: number
+  encodingUsed: string
+  elapsedMs: number
+  recordCount: number
+  execCount: number
+  warnings: string[]
+}
+
+/** run_rule 返回:友好列记录 + 每步原始记录 + 告警 + 每步轨迹(与 Rust RunOutput camelCase 对齐)。 */
 export interface EngineRunOutput {
   records: Array<Record<string, string | null>>
   stepRecords: Record<string, Array<Record<string, string | null>>>
   warnings: string[]
+  traces: StepTrace[]
 }
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window

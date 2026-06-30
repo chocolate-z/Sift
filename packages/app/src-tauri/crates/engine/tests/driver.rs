@@ -398,3 +398,52 @@ async fn next_button_require_text_stops_when_text_changes() {
     assert_eq!(out.records[1]["标题"].as_deref(), Some("B"));
     assert!(out.records.iter().all(|r| r["标题"].as_deref() != Some("WRONG")));
 }
+
+#[tokio::test]
+async fn run_rule_emits_step_traces() {
+    // 调试台用:每步轨迹带请求 URL / HTTP 状态 / 产出条数 / 执行次数。
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body>
+                <div class="row"><span class="t">甲</span></div>
+                <div class="row"><span class="t">乙</span></div>
+            </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let rule_json = format!(
+        r#"{{
+        "irVersion": 1,
+        "meta": {{ "id": "t", "name": "轨迹", "origin": "handwritten", "sourceType": "web" }},
+        "entry": {{ "kind": "none" }},
+        "steps": [{{
+            "id": "list", "name": "列表",
+            "request": {{ "url": {{ "kind": "static", "url": "{base}/list" }} }},
+            "parse": {{
+                "shape": "list",
+                "list": {{ "container": {{ "engine": "css", "expr": ".row" }} }},
+                "fields": {{ "title": {{ "selector": {{ "engine": "css", "expr": ".t" }} }} }}
+            }}
+        }}],
+        "output": {{ "format": "records", "columns": [{{ "name": "标题", "fromField": "title", "fromStep": "list" }}] }}
+    }}"#,
+        base = server.uri()
+    );
+    let rule: Rule = serde_json::from_str(&rule_json).unwrap();
+    let client = HttpClient::unlimited().unwrap();
+    let out = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
+        .await
+        .unwrap();
+
+    assert_eq!(out.traces.len(), 1);
+    let tr = &out.traces[0];
+    assert_eq!(tr.step_id, "list");
+    assert_eq!(tr.label, "列表");
+    assert_eq!(tr.http_status, 200);
+    assert_eq!(tr.record_count, 2);
+    assert_eq!(tr.exec_count, 1);
+    assert!(tr.request_url.ends_with("/list"), "url: {}", tr.request_url);
+}

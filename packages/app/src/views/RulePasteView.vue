@@ -57,6 +57,8 @@ async function runCompiled(rule: Rule) {
   runError.value = null
   runNotice.value = null
   const param = rule.entry.kind === 'keyword' ? rule.entry.param : 'keyword'
+  // 记录最近规则与输入,供调试台「开始调试」复用重跑。
+  dataset.setLastRun(rule, { [param]: keyword.value })
   if (!isTauri) {
     runNotice.value = '真实运行仅在桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
     return

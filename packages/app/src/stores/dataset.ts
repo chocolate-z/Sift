@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { Rule } from '@sift/core-ir'
 
 /** 数据预览的一列(由规则 output 列驱动)。 */
 export interface DatasetColumn {
@@ -20,6 +21,14 @@ export const useDatasetStore = defineStore('dataset', () => {
   const warnings = ref<string[]>([])
   // 当前展示的数据集对应的已存库 id(供历史列表高亮);新跑出/未落库时为 null。
   const currentId = ref<number | null>(null)
+  // 最近一次运行的规则与输入(供调试台「开始调试」复用重跑、逐步可视)。
+  const lastRule = ref<Rule | null>(null)
+  const lastInputs = ref<Record<string, string>>({})
+
+  function setLastRun(rule: Rule, inputs: Record<string, string>) {
+    lastRule.value = rule
+    lastInputs.value = inputs
+  }
 
   function setResult(cols: DatasetColumn[], data: DatasetRow[], source: string, warns: string[] = []) {
     active.value = true
@@ -43,5 +52,18 @@ export const useDatasetStore = defineStore('dataset', () => {
     currentId.value = null
   }
 
-  return { active, columns, rows, sourceName, warnings, currentId, setResult, setCurrentId, clear }
+  return {
+    active,
+    columns,
+    rows,
+    sourceName,
+    warnings,
+    currentId,
+    lastRule,
+    lastInputs,
+    setResult,
+    setCurrentId,
+    setLastRun,
+    clear
+  }
 })

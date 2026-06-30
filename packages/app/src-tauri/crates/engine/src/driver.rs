@@ -28,6 +28,46 @@ pub struct RunOutput {
     /// 每步原始记录(调试 / provenance)。
     pub step_records: BTreeMap<String, Vec<Record>>,
     pub warnings: Vec<String>,
+    /// 每步执行轨迹(调试台逐步可视:请求/状态/耗时/产出/告警)。
+    pub traces: Vec<StepTrace>,
+}
+
+/// 一步的执行轨迹(取该步首次执行的请求元信息 + 该步聚合产出/告警)。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepTrace {
+    pub step_id: String,
+    pub label: String,
+    /// 首次执行的最终请求 URL(fanout 多次执行只取代表性首条)。
+    pub request_url: String,
+    pub http_status: u16,
+    pub encoding_used: String,
+    pub elapsed_ms: u64,
+    /// 本步产出记录数。
+    pub record_count: usize,
+    /// 本步执行次数(fanout perItem = 上游记录数)。
+    pub exec_count: usize,
+    pub warnings: Vec<String>,
+}
+
+/// 单次抓取的请求元信息(内部用,串到 run_rule 装配 StepTrace)。
+#[derive(Debug, Clone, Default)]
+struct FetchMeta {
+    url: String,
+    status: u16,
+    encoding_used: String,
+    elapsed_ms: u64,
+}
+
+impl FetchMeta {
+    fn of(resp: &crate::request::FetchResponse) -> Self {
+        Self {
+            url: resp.final_url.clone(),
+            status: resp.status,
+            encoding_used: resp.encoding_used.clone(),
+            elapsed_ms: resp.elapsed_ms,
+        }
+    }
 }
 
 /// 执行整条规则。`inputs` 为用户种子变量(keyword 等),`credentials` 由加密库填充。
@@ -49,16 +89,23 @@ pub async fn run_rule(
     let defaults = rule.defaults.as_ref();
     let mut step_records: BTreeMap<String, Vec<Record>> = BTreeMap::new();
     let mut last_step_id = String::new();
+    let mut traces: Vec<StepTrace> = Vec::new();
 
     for step in &rule.steps {
         last_step_id = step.id.clone();
         let executions = plan_executions(step, &scope, &step_records, &mut warnings);
+        let exec_count = executions.len();
 
         let mut produced: Vec<Record> = Vec::new();
+        let mut step_warnings: Vec<String> = Vec::new();
+        let mut first_meta: Option<FetchMeta> = None;
         for (exec_scope, parent) in executions {
             match run_execution(client, step, &exec_scope, defaults, credentials).await {
-                Ok((mut recs, exec_warnings)) => {
-                    warnings.extend(exec_warnings);
+                Ok((mut recs, exec_warnings, meta)) => {
+                    if first_meta.is_none() {
+                        first_meta = Some(meta);
+                    }
+                    step_warnings.extend(exec_warnings);
                     if let Some(parent) = &parent {
                         inherit(parent, &mut recs);
                     }
@@ -66,13 +113,28 @@ pub async fn run_rule(
                 }
                 Err(e) => {
                     if step.optional {
-                        warnings.push(format!("步骤 '{}' 跳过: {e}", step.id));
+                        step_warnings.push(format!("步骤 '{}' 跳过: {e}", step.id));
                     } else {
                         return Err(e);
                     }
                 }
             }
         }
+
+        // 该步轨迹:取首次执行的请求元信息 + 聚合产出/告警(供调试台逐步可视)。
+        let meta = first_meta.unwrap_or_default();
+        traces.push(StepTrace {
+            step_id: step.id.clone(),
+            label: step.name.clone(),
+            request_url: meta.url,
+            http_status: meta.status,
+            encoding_used: meta.encoding_used,
+            elapsed_ms: meta.elapsed_ms,
+            record_count: produced.len(),
+            exec_count,
+            warnings: step_warnings.clone(),
+        });
+        warnings.extend(step_warnings);
 
         // produces:单记录生产者把字段导出为下游变量(取首条,最常见于单页步骤)。
         if let Some(first) = produced.first() {
@@ -91,6 +153,7 @@ pub async fn run_rule(
         records,
         step_records,
         warnings,
+        traces,
     })
 }
 
@@ -135,7 +198,7 @@ async fn run_execution(
     scope: &VarScope,
     defaults: Option<&RequestConfig>,
     credentials: &Credentials,
-) -> EngineResult<(Vec<Record>, Vec<String>)> {
+) -> EngineResult<(Vec<Record>, Vec<String>, FetchMeta)> {
     let request = lower_request(&step.request, scope, defaults, credentials)?;
     match &step.pagination {
         None | Some(Pagination::None) => {
@@ -182,13 +245,13 @@ async fn run_execution(
             .await
         }
         Some(Pagination::Cursor { .. }) => {
-            let (recs, mut warnings) =
+            let (recs, mut warnings, meta) =
                 fetch_parse_once(client, &request, &step.parse, &step.id).await?;
             warnings.push(format!(
                 "步骤 '{}' cursor 翻页待实现(phase-2),仅取首页",
                 step.id
             ));
-            Ok((recs, warnings))
+            Ok((recs, warnings, meta))
         }
     }
 }
@@ -199,15 +262,16 @@ async fn fetch_parse_once(
     request: &FetchRequest,
     parse: &crate::parse::ParseSpec,
     step_id: &str,
-) -> EngineResult<(Vec<Record>, Vec<String>)> {
+) -> EngineResult<(Vec<Record>, Vec<String>, FetchMeta)> {
     let resp = client.fetch(request).await?;
+    let meta = FetchMeta::of(&resp);
     let parsed = parse_document(&resp.body, parse, Some(&resp.final_url))?;
     let warnings = parsed
         .warnings
         .into_iter()
         .map(|w| format!("[{step_id}] {w}"))
         .collect();
-    Ok((parsed.records, warnings))
+    Ok((parsed.records, warnings, meta))
 }
 
 /// pageParam 翻页:递增查询参数,空页或达上限即止。
@@ -222,15 +286,19 @@ async fn paginate_param(
     page_step: i64,
     max_pages: u32,
     combine: Option<PageCombine>,
-) -> EngineResult<(Vec<Record>, Vec<String>)> {
+) -> EngineResult<(Vec<Record>, Vec<String>, FetchMeta)> {
     let mut warnings = Vec::new();
     let mut pages: Vec<Vec<Record>> = Vec::new();
+    let mut first_meta: Option<FetchMeta> = None;
     let mut page = start;
     for _ in 0..max_pages {
         let url = set_query_param(&base.url, param, &page.to_string());
         let mut req = base.clone();
         req.url = url;
         let resp = client.fetch(&req).await?;
+        if first_meta.is_none() {
+            first_meta = Some(FetchMeta::of(&resp));
+        }
         let parsed = parse_document(&resp.body, parse, Some(&resp.final_url))?;
         warnings.extend(
             parsed
@@ -245,7 +313,7 @@ async fn paginate_param(
         }
         page += page_step;
     }
-    Ok((combine_pages(pages, combine), warnings))
+    Ok((combine_pages(pages, combine), warnings, first_meta.unwrap_or_default()))
 }
 
 /// nextButton 翻页:跟随页内"下一页"链接;无链接 / 命中 stopText / 达上限即止。
@@ -260,9 +328,10 @@ async fn paginate_next(
     require_text: Option<&str>,
     max_pages: u32,
     combine: Option<PageCombine>,
-) -> EngineResult<(Vec<Record>, Vec<String>)> {
+) -> EngineResult<(Vec<Record>, Vec<String>, FetchMeta)> {
     let mut warnings = Vec::new();
     let mut pages: Vec<Vec<Record>> = Vec::new();
+    let mut first_meta: Option<FetchMeta> = None;
     // 已抓 URL 集合:防止末页「下一页」指回自身/旧页时无限循环重复抓取。
     let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut req = base.clone();
@@ -271,6 +340,9 @@ async fn paginate_next(
             break; // 该 URL 已抓过 → 到底
         }
         let resp = client.fetch(&req).await?;
+        if first_meta.is_none() {
+            first_meta = Some(FetchMeta::of(&resp));
+        }
         let final_url = resp.final_url.clone();
         let parsed = parse_document(&resp.body, parse, Some(&final_url))?;
         warnings.extend(
@@ -289,7 +361,7 @@ async fn paginate_next(
             _ => break, // 无下一页 / 指回已抓页 → 到底
         }
     }
-    Ok((combine_pages(pages, combine), warnings))
+    Ok((combine_pages(pages, combine), warnings, first_meta.unwrap_or_default()))
 }
 
 /// 从页面解析下一页链接。两类文本门控(任一不满足即视为到底返回 None):
