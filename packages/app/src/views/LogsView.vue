@@ -7,18 +7,18 @@ interface LogRow {
   msg: string
 }
 const logs = ref<LogRow[]>([
-  { time: '16:57:11', level: 'INFO', msg: '引擎就绪 · 已加载 12 个规则' },
-  { time: '16:57:09', level: 'INFO', msg: '七猫规则解析完成 · 识别 2 个数据源,正文过滤已解码' },
-  { time: '16:56:40', level: 'WARN', msg: '旧钢笔会话即将过期 · 建议在凭据管理中更新 Cookie' },
+  { time: '16:57:11', level: 'INFO', msg: '引擎就绪 · 已加载 0 个规则' },
+  { time: '16:57:09', level: 'INFO', msg: '采集规则解析完成 · 识别 1 个数据源' },
+  { time: '16:56:40', level: 'WARN', msg: '凭据即将过期 · 建议在凭据管理中更新' },
   {
     time: '16:56:22',
     level: 'ERROR',
-    msg: '旧钢笔 · 正文 .chapter_content > a:eq(1) 返回 0 字 · HTTP 200 疑似反爬提示页'
+    msg: '内容选择器返回 0 字 · HTTP 200 疑似反爬提示页'
   },
-  { time: '16:56:18', level: 'INFO', msg: '旧钢笔 · 目录解析成功 · 1083 章' },
+  { time: '16:56:18', level: 'INFO', msg: '子列表解析成功 · 86 项' },
   { time: '16:55:50', level: 'WARN', msg: '网络限速触发 · 请求间隔自动提升至 800ms' },
-  { time: '16:55:31', level: 'INFO', msg: '书城商品列表 · 抓取完成 · 5 条 / 当前页' },
-  { time: '16:55:02', level: 'ERROR', msg: '书城 API Token 已失效(401)· 请在凭据管理中重新登录' },
+  { time: '16:55:31', level: 'INFO', msg: '采集完成 · 24 条 / 当前页' },
+  { time: '16:55:02', level: 'ERROR', msg: 'API Token 已失效(401)· 请在凭据管理中重新登录' },
   { time: '16:54:47', level: 'INFO', msg: '应用启动 · Sift Pro v0.1.0 · 本地优先模式' }
 ])
 

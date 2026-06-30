@@ -255,7 +255,7 @@ function submitTask() {
           </DialogDescription>
           <div class="tl-field">
             <label>任务名称</label>
-            <input v-model="form.name" placeholder="例如 七猫 · 诡秘之主" />
+            <input v-model="form.name" placeholder="例如 商品列表" />
           </div>
           <div class="tl-field">
             <label>类型</label>

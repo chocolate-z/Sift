@@ -15,16 +15,16 @@ const router = useRouter()
 const tasks = useTasksStore()
 
 const pickMode = ref(true)
-const pickedTitle = ref('大奉打更人')
+const pickedTitle = ref('示例条目 2')
 const page = ref(1)
-const url = ref('https://book.example.com/list?cat=novel')
+const url = ref('https://example.com/list')
 
 const books = [
-  { title: '剑来', price: '¥39.00' },
-  { title: '大奉打更人', price: '¥28.00' },
-  { title: '诡秘之主', price: '¥45.00' },
-  { title: '凡人修仙传', price: '¥32.00' },
-  { title: '三体', price: '¥35.00' }
+  { title: '示例条目 1', price: '¥39.00' },
+  { title: '示例条目 2', price: '¥28.00' },
+  { title: '示例条目 3', price: '¥45.00' },
+  { title: '示例条目 4', price: '¥32.00' },
+  { title: '示例条目 5', price: '¥35.00' }
 ]
 
 let uid = 0
@@ -107,9 +107,9 @@ function showFlash(key: string) {
 }
 function saveAsTask() {
   tasks.addTask({
-    name: '书城商品列表',
+    name: '示例列表',
     type: 'pick',
-    url: 'book.example.com/list?cat=novel',
+    url: 'example.com/list',
     fields: String(fields.value.length),
     lastRun: '从未运行',
     result: '—',
@@ -172,15 +172,15 @@ onBeforeUnmount(() => {
       <!-- preview: rendered target page -->
       <div class="preview">
         <div class="mini-head">
-          <span class="mini-brand">书阁 BookHall</span>
-          <div class="mini-search">搜索书名 / 作者…</div>
+          <span class="mini-brand">示例站点 Example</span>
+          <div class="mini-search">搜索…</div>
           <nav class="mini-nav">
             <a>分类</a>
             <a>排行</a>
-            <a class="active">小说</a>
+            <a class="active">列表</a>
           </nav>
         </div>
-        <div class="crumb">首页 / 小说 / 玄幻 · 共 128 本</div>
+        <div class="crumb">首页 / 列表 · 共 24 项</div>
         <div class="grid">
           <div
             v-for="b in books"

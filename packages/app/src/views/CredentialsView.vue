@@ -175,7 +175,7 @@ function submitCred() {
           </DialogDescription>
           <div class="cr-field">
             <label>名称</label>
-            <input v-model="form.name" placeholder="例如 七猫账号 Cookie" />
+            <input v-model="form.name" placeholder="例如 站点 Cookie" />
           </div>
           <div class="cr-field">
             <label>类型</label>

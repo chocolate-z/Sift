@@ -14,7 +14,7 @@ const router = useRouter()
 type Tab = 'req' | 'resp' | 'parse'
 const alt = ref(false) // false=调试态 · true=初始态(空态)
 const tab = ref<Tab>('resp')
-const keyword = ref('诡秘之主')
+const keyword = ref('')
 
 // 调试源选择(切换标签;各源的调试场景待 M1 引擎)
 interface DebugSource {
@@ -23,8 +23,8 @@ interface DebugSource {
   glyph: string
   label: string
 }
-const DEFAULT_SOURCE: DebugSource = { name: '旧钢笔文学', type: 'web', glyph: '</>', label: '网页源' }
-const sources: DebugSource[] = [DEFAULT_SOURCE, { name: '七猫中文网', type: 'api', glyph: '{}', label: 'API 源' }]
+const DEFAULT_SOURCE: DebugSource = { name: '示例网页源', type: 'web', glyph: '</>', label: '网页源' }
+const sources: DebugSource[] = [DEFAULT_SOURCE, { name: '示例 API 源', type: 'api', glyph: '{}', label: 'API 源' }]
 const current = ref<DebugSource>(DEFAULT_SOURCE)
 function selectSource(s: DebugSource) {
   current.value = s
@@ -49,21 +49,21 @@ onBeforeUnmount(() => {
 
 // 左侧采集链路(调试态)
 const timeline = [
-  { n: 1, label: '搜索', status: 'ok', meta: 'GET /modules/article/search.php · 312ms · 命中 1 本', line: 'ok' },
-  { n: 2, label: '目录', status: 'ok', meta: '解析 1083 章 · 1.2s', line: 'grad' },
-  { n: 3, label: '正文', status: 'fail', meta: 'GET .../67890.html · 正文为空', line: 'none' }
+  { n: 1, label: '搜索', status: 'ok', meta: 'GET /search · 312ms · 命中 1 条', line: 'ok' },
+  { n: 2, label: '子列表', status: 'ok', meta: '解析 86 项 · 1.2s', line: 'grad' },
+  { n: 3, label: '子页', status: 'fail', meta: 'GET .../67890.html · 内容为空', line: 'none' }
 ]
 // 左侧采集链路(初始态)
 const idleSteps = [
   { n: 1, label: '搜索' },
-  { n: 2, label: '目录' },
-  { n: 3, label: '正文' }
+  { n: 2, label: '子列表' },
+  { n: 3, label: '子页' }
 ]
 
 // 请求标签:请求头
 const reqHeaders = [
   { k: 'User-Agent:', v: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...' },
-  { k: 'Referer:', v: 'http://www.jiugangbi.com/book/12345/' },
+  { k: 'Referer:', v: 'https://example.com/item/12345/' },
   { k: 'Cookie:', v: 'PHPSESSID=••••••••••••••••', enc: true },
   { k: 'Accept:', v: 'text/html,application/xhtml+xml' }
 ]
@@ -76,20 +76,20 @@ const respCode = [
   [{ t: '  <div class="' }, { t: 'tips', cls: 'tag' }, { t: '">' }],
   [{ t: '    系统检测到访问异常,请稍后重试', cls: 'warn' }],
   [{ t: '  </div>' }],
-  [{ t: '  <!-- 预期的 .chapter_content > a:eq(1) 缺失 -->', cls: 'miss' }],
+  [{ t: '  <!-- 预期的 .content 选择器缺失 -->', cls: 'miss' }],
   [{ t: '</div>' }]
 ]
 
 // 解析结果标签:本步解析输出 + 上游传入
 const parseRows = [
-  { field: '正文 (.chapter_content)', value: '(空 · 0 字)', status: 'fail' },
+  { field: '内容 (.content)', value: '(空 · 0 字)', status: 'fail' },
   { field: '过滤命中', value: '0 / 3 条', status: 'dash' },
   { field: '字数统计', value: '0', status: 'dash' }
 ]
 const upstream = [
-  { t: 'book_id = 12345', kind: 'var' },
-  { t: 'item_id = 67890', kind: 'var' },
-  { t: '章节名 = 第一章 深红', kind: 'ok' }
+  { t: 'id = 12345', kind: 'var' },
+  { t: 'sub_id = 67890', kind: 'var' },
+  { t: '子项 = 示例条目', kind: 'ok' }
 ]
 </script>
 
@@ -232,7 +232,7 @@ const upstream = [
       <div class="detail">
         <div class="detail-head">
           <div class="dh-row">
-            <span class="dh-title">③ 正文</span>
+            <span class="dh-title">③ 子页</span>
             <span class="dh-badge">
               <svg
                 width="10"
@@ -262,17 +262,17 @@ const upstream = [
             </svg>
             <div class="eb-text">
               <div class="eb-title">
-                正文选择器
-                <span class="mono">.chapter_content &gt; a:eq(1)</span>
+                内容选择器
+                <span class="mono">.content &gt; a:eq(1)</span>
                 返回 0 字
               </div>
               <div class="eb-desc">
                 页面已返回但
                 <span class="mono amber">:eq(1)</span>
-                未取到第 2 个 &lt;a&gt; —— 正文按
+                未取到第 2 个 &lt;a&gt; —— 内容按
                 <span class="mono amber">GB2312</span>
                 解码后结构与预期不符,或触发了反爬提示页。建议改用
-                <span class="mono accent">.chapter_content &gt; a:last</span>
+                <span class="mono accent">.content &gt; a:last</span>
                 备选选择器重试。
               </div>
             </div>
@@ -394,7 +394,7 @@ const upstream = [
               <button type="button" class="btn-primary sm" @click="retryAlt">
                 {{ retryFlash ? '重试中…' : '用备选选择器重试' }}
               </button>
-              <button type="button" class="btn-soft" @click="router.push('/import')">编辑正文规则</button>
+              <button type="button" class="btn-soft" @click="router.push('/import')">编辑采集规则</button>
             </div>
           </div>
         </div>
