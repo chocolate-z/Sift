@@ -208,6 +208,56 @@ async fn empty_url_is_invalid() {
     assert!(!err.is_retryable());
 }
 
+/// 把 %XX 序列按 GBK 解回文本(校验发出去的查询确为 gb2312 编码,不硬编码字节)。
+fn percent_decode_gbk(s: &str) -> String {
+    let raw = s.as_bytes();
+    let mut bytes = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%' && i + 2 < raw.len() {
+            let hex = std::str::from_utf8(&raw[i + 1..i + 3]).unwrap();
+            bytes.push(u8::from_str_radix(hex, 16).unwrap());
+            i += 3;
+        } else {
+            bytes.push(raw[i]);
+            i += 1;
+        }
+    }
+    encoding_rs::GBK.decode(&bytes).0.into_owned()
+}
+
+#[tokio::test]
+async fn gb2312_encoding_applies_to_request_query() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+
+    let client = HttpClient::unlimited().unwrap();
+    let req = FetchRequest {
+        encoding: Some("gb2312".to_string()),
+        ..FetchRequest::get(format!("{}/search?searchkey=剑来&an=搜索", server.uri()))
+    };
+    client.fetch(&req).await.unwrap();
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1);
+    let query = received[0].url.query().unwrap();
+    // 发出去的原始查询是百分号转义、纯 ASCII。
+    assert!(query.is_ascii(), "query: {query}");
+    // 但它必须是 gb2312(GBK)字节,而非 UTF-8:剑 的 UTF-8 是 %E5%89%91,不应出现。
+    assert!(
+        !query.to_uppercase().contains("%E5%89%91"),
+        "query was UTF-8 encoded, not gb2312: {query}"
+    );
+    // 按 GBK 解回应还原中文关键词与字面「搜索」。
+    let decoded = percent_decode_gbk(query);
+    assert!(decoded.contains("剑来"), "decoded: {decoded}");
+    assert!(decoded.contains("搜索"), "decoded: {decoded}");
+}
+
 #[test]
 fn deserializes_camel_case_ir_shape() {
     // 证明 IR(core-ir RequestConfig 的已解析形态)能直接 serde 反序列化进 FetchRequest。

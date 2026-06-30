@@ -42,6 +42,12 @@ impl HttpClient {
             return Err(EngineError::InvalidRequest("URL 为空".into()));
         }
         let url = apply_url_replace(&req.url, &req.url_replace_rules);
+        // 非 UTF-8 源(如旧钢笔 gb2312):查询里的非 ASCII(关键词、字面中文)需按目标
+        // charset 百分号编码,否则 reqwest 会按 UTF-8 编码,网站收到乱码搜不到。
+        let url = match &req.encoding {
+            Some(enc) => encode_query_charset(&url, enc),
+            None => url,
+        };
 
         let mut attempt = 0u32;
         loop {
@@ -111,6 +117,43 @@ impl HttpClient {
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
+}
+
+/// 按目标 charset 重编 URL 查询串里的非 ASCII 字符(百分号编码)。结构字符(& = ? %
+/// 以及已有的 %XX)与 ASCII 原样保留;非 ASCII 用该 charset 的字节序列百分号编码。
+/// 仅作用于查询(关键词所在);路径多为 ASCII,UTF-8 站点(encoding=None)不调用此函数。
+fn encode_query_charset(url: &str, encoding_label: &str) -> String {
+    let enc = match encoding_rs::Encoding::for_label(encoding_label.as_bytes()) {
+        Some(e) if e != encoding_rs::UTF_8 => e,
+        // UTF-8 或无法识别的标签:交给 reqwest 默认处理。
+        _ => return url.to_string(),
+    };
+    let Some(qpos) = url.find('?') else {
+        return url.to_string();
+    };
+    // 把 fragment(#...)从查询里分出来,不参与编码。
+    let (head, rest) = url.split_at(qpos + 1);
+    let (query, frag) = match rest.find('#') {
+        Some(fpos) => (&rest[..fpos], &rest[fpos..]),
+        None => (rest, ""),
+    };
+
+    let mut out = String::with_capacity(url.len());
+    out.push_str(head);
+    for ch in query.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            let mut buf = [0u8; 4];
+            let (bytes, _, _) = enc.encode(ch.encode_utf8(&mut buf));
+            for b in bytes.iter() {
+                out.push('%');
+                out.push_str(&format!("{b:02X}"));
+            }
+        }
+    }
+    out.push_str(frag);
+    out
 }
 
 /// 依次套用替换规则到 URL(line-B url_replace_rules)。
@@ -186,5 +229,61 @@ mod tests {
         assert!(should_retry_status(429));
         assert!(!should_retry_status(404));
         assert!(!should_retry_status(200));
+    }
+
+    /// 把 %XX 序列按 GBK 解码回文本(校验编码正确,不硬编码字节)。
+    fn percent_decode_gbk(s: &str) -> String {
+        let mut bytes = Vec::new();
+        let raw = s.as_bytes();
+        let mut i = 0;
+        while i < raw.len() {
+            if raw[i] == b'%' && i + 2 < raw.len() {
+                let hex = std::str::from_utf8(&raw[i + 1..i + 3]).unwrap();
+                bytes.push(u8::from_str_radix(hex, 16).unwrap());
+                i += 3;
+            } else {
+                bytes.push(raw[i]);
+                i += 1;
+            }
+        }
+        let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+        text.into_owned()
+    }
+
+    #[test]
+    fn encodes_query_as_gb2312() {
+        let out = encode_query_charset(
+            "http://www.jiugangbi.com/modules/article/search.php?searchkey=剑来&an=搜索",
+            "gb2312",
+        );
+        // 查询里不再有裸非 ASCII,结构字符保留。
+        assert!(out.is_ascii());
+        assert!(out.starts_with("http://www.jiugangbi.com/modules/article/search.php?searchkey="));
+        assert!(out.contains("&an="));
+        // %XX 按 GBK 解回应还原中文(关键词 + 字面「搜索」)。
+        let decoded = percent_decode_gbk(&out);
+        assert!(decoded.contains("剑来"), "decoded: {decoded}");
+        assert!(decoded.contains("搜索"), "decoded: {decoded}");
+    }
+
+    #[test]
+    fn utf8_and_unknown_labels_pass_through() {
+        let url = "http://x.com/s?kw=剑来";
+        assert_eq!(encode_query_charset(url, "utf-8"), url);
+        assert_eq!(encode_query_charset(url, "not-a-charset"), url);
+    }
+
+    #[test]
+    fn no_query_unchanged() {
+        assert_eq!(
+            encode_query_charset("http://x.com/path", "gb2312"),
+            "http://x.com/path"
+        );
+    }
+
+    #[test]
+    fn ascii_query_unchanged_under_gb2312() {
+        let url = "http://x.com/s?kw=hello&p=1";
+        assert_eq!(encode_query_charset(url, "gb2312"), url);
     }
 }
