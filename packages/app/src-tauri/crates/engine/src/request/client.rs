@@ -18,12 +18,8 @@ pub struct HttpClient {
 impl HttpClient {
     /// 以给定限速器构造。重定向上限 10 跳。
     pub fn new(limiter: RateLimiter) -> EngineResult<Self> {
-        let follow = reqwest::Client::builder()
-            .redirect(Policy::limited(10))
-            .build()?;
-        let no_redirect = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .build()?;
+        let follow = base_builder().redirect(Policy::limited(10)).build()?;
+        let no_redirect = base_builder().redirect(Policy::none()).build()?;
         Ok(Self {
             follow,
             no_redirect,
@@ -117,6 +113,21 @@ impl HttpClient {
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
+}
+
+/// 默认 UA(部分站点拒绝无 UA 请求;书源未设 UA 时兜底,有自定义 UA 则覆盖)。
+const DEFAULT_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+/// reqwest 基础构造:对**响应头宽容**——真实站点(如七猫的 istio-envoy 网关)常发出
+/// 不规范的合并头/多行头,hyper 严格解析会整条响应报错「invalid HTTP header parsed」;
+/// curl 等宽容客户端能正常收。这里放开宽容选项,跳过坏头而非整体失败。
+fn base_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent(DEFAULT_UA)
+        .http1_allow_obsolete_multiline_headers_in_responses(true)
+        .http1_allow_spaces_after_header_name_in_responses(true)
+        .http1_ignore_invalid_headers_in_responses(true)
 }
 
 /// 按目标 charset 重编 URL 查询串里的非 ASCII 字符(百分号编码)。结构字符(& = ? %

@@ -57,6 +57,11 @@ async function runCompiled(rule: Rule) {
   running.value = true
   try {
     const out = await runRule(rule, { [param]: keyword.value })
+    if (!out.records.length) {
+      const tail = out.warnings.slice(0, 2).join(' / ')
+      runNotice.value = `未解析到数据(0 条)。${tail || '检查关键词、选择器或站点是否可达'}`
+      return
+    }
     dataset.setResult(
       rule.output.columns.map((c) => ({ name: c.name, field: c.fromField, type: c.type })),
       out.records,
@@ -65,7 +70,9 @@ async function runCompiled(rule: Rule) {
     )
     router.push('/data')
   } catch (e) {
-    runError.value = `运行失败:${(e as Error).message}`
+    // Tauri 命令以 Err(String) 拒绝,catch 到的是字符串而非 Error。
+    const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e)
+    runError.value = `运行失败:${msg}`
   } finally {
     running.value = false
   }
