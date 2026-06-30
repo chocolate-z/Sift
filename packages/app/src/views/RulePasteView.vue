@@ -63,7 +63,8 @@ async function runCompiled(rule: Rule) {
       return
     }
     dataset.setResult(
-      rule.output.columns.map((c) => ({ name: c.name, field: c.fromField, type: c.type })),
+      // 引擎 RunOutput.records 以列显示名为键(assemble_output 用 col.name),故 field 取 name。
+      rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type })),
       out.records,
       rule.meta.name,
       out.warnings
