@@ -447,3 +447,27 @@ async fn run_rule_emits_step_traces() {
     assert_eq!(tr.exec_count, 1);
     assert!(tr.request_url.ends_with("/list"), "url: {}", tr.request_url);
 }
+
+#[tokio::test]
+async fn download_bytes_fetches_raw_file() {
+    let server = MockServer::start().await;
+    let body: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]; // 伪 PNG 头 + 数据
+    Mock::given(method("GET"))
+        .and(path("/cover.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(body.clone()),
+        )
+        .mount(&server)
+        .await;
+
+    let client = HttpClient::unlimited().unwrap();
+    let f = client
+        .download_bytes(&format!("{}/cover.png", server.uri()), 10_000)
+        .await
+        .unwrap();
+    assert_eq!(f.status, 200);
+    assert_eq!(f.bytes, body);
+    assert_eq!(f.content_type.as_deref(), Some("image/png"));
+}

@@ -29,7 +29,8 @@ pub fn run() {
       storage_cmd::db_list_datasets,
       storage_cmd::db_load_dataset,
       storage_cmd::db_delete_dataset,
-      download_cmd::save_text_file
+      download_cmd::save_text_file,
+      download_cmd::download_files
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -9,3 +9,25 @@ export async function saveTextFile(name: string, content: string): Promise<strin
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<string>('save_text_file', { name, content })
 }
+
+/** 单个文件的下载结果。 */
+export interface DownloadResult {
+  url: string
+  ok: boolean
+  path: string | null
+  size: number
+  error: string | null
+}
+
+/** 一批下载的产物:落盘子目录 + 逐条结果。 */
+export interface DownloadBatch {
+  dir: string
+  results: DownloadResult[]
+}
+
+/** 批量下载文件链接到下载目录下的 Sift/<subdir>/,逐条返回结果。 */
+export async function downloadFiles(urls: string[], subdir: string): Promise<DownloadBatch> {
+  if (!isTauri) throw new Error('文件下载仅桌面端可用')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<DownloadBatch>('download_files', { urls, subdir })
+}

@@ -7,6 +7,12 @@ const store = useDownloadsStore()
 const downloadingCount = computed(() => store.items.filter((i) => i.status === 'downloading').length)
 // 并发显示封顶到上限 2(引擎只会同时跑 2 个,多出的概念上排队)
 const activeSlots = computed(() => Math.min(downloadingCount.value, 2))
+// 总进度:有进度项的平均(空队列为 0)。
+const totalProgress = computed(() => {
+  const withP = store.items.filter((i) => i.progress != null)
+  if (!withP.length) return 0
+  return Math.round(withP.reduce((s, i) => s + (i.progress ?? 0), 0) / withP.length)
+})
 
 function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
   if (s === 'downloading') return 'white'
@@ -31,7 +37,7 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
         </span>
         <span class="stat">
           总进度
-          <span class="mono v">41%</span>
+          <span class="mono v">{{ totalProgress }}%</span>
         </span>
         <span class="stat">
           速度

@@ -8,7 +8,7 @@ mod client;
 mod encoding;
 mod rate_limit;
 
-pub use client::HttpClient;
+pub use client::{DownloadedFile, HttpClient};
 pub use rate_limit::RateLimiter;
 
 use serde::{Deserialize, Serialize};

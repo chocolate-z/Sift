@@ -113,6 +113,41 @@ impl HttpClient {
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
+
+    /// 下载一个 URL 的原始字节(图片/文件下载用,不解码为文本)。跟随重定向、走限速。
+    /// 状态码不在此判定成败(返回 status,由调用方据 >=400 判失败),便于上层逐条记录。
+    pub async fn download_bytes(&self, url: &str, timeout_ms: u64) -> EngineResult<DownloadedFile> {
+        if url.trim().is_empty() {
+            return Err(EngineError::InvalidRequest("URL 为空".into()));
+        }
+        self.limiter.acquire().await;
+        let resp = self
+            .follow
+            .get(url)
+            .timeout(Duration::from_millis(timeout_ms))
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let bytes = resp.bytes().await?.to_vec();
+        Ok(DownloadedFile {
+            status,
+            content_type,
+            bytes,
+        })
+    }
+}
+
+/// 二进制下载结果(图片/文件;不解码为文本)。
+#[derive(Debug, Clone)]
+pub struct DownloadedFile {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub bytes: Vec<u8>,
 }
 
 /// 默认 UA(部分站点拒绝无 UA 请求;书源未设 UA 时兜底,有自定义 UA 则覆盖)。

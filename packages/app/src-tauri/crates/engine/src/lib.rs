@@ -29,8 +29,8 @@ pub use parse::{
 };
 pub use pipeline::{apply_pipeline, apply_pipeline_str, PipelineContext, PipelineOp};
 pub use request::{
-    FetchRequest, FetchResponse, HttpClient, HttpMethod, RateLimiter, RequestBody, RetryPolicy,
-    UrlReplaceRule,
+    DownloadedFile, FetchRequest, FetchResponse, HttpClient, HttpMethod, RateLimiter, RequestBody,
+    RetryPolicy, UrlReplaceRule,
 };
 pub use rule::{
     CollectStep, EntryPoint, Fanout, OutputColumn, OutputSpec, Pagination, Rule, RuleMeta,
