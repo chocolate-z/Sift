@@ -449,7 +449,7 @@ async fn run_rule_emits_step_traces() {
 }
 
 #[tokio::test]
-async fn download_bytes_fetches_raw_file() {
+async fn download_streamed_fetches_raw_file_with_progress() {
     let server = MockServer::start().await;
     let body: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]; // 伪 PNG 头 + 数据
     Mock::given(method("GET"))
@@ -463,11 +463,19 @@ async fn download_bytes_fetches_raw_file() {
         .await;
 
     let client = HttpClient::unlimited().unwrap();
+    let mut last_downloaded = 0u64;
+    let mut total_seen: Option<u64> = None;
     let f = client
-        .download_bytes(&format!("{}/cover.png", server.uri()), 10_000)
+        .download_streamed(&format!("{}/cover.png", server.uri()), 10_000, |d, t| {
+            last_downloaded = d;
+            total_seen = t;
+        })
         .await
         .unwrap();
     assert_eq!(f.status, 200);
     assert_eq!(f.bytes, body);
     assert_eq!(f.content_type.as_deref(), Some("image/png"));
+    // 进度回调跑过:最终 downloaded == 文件大小,total 来自 Content-Length。
+    assert_eq!(last_downloaded, body.len() as u64);
+    assert_eq!(total_seen, Some(body.len() as u64));
 }

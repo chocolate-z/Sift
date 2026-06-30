@@ -3,9 +3,14 @@
 
 use std::path::PathBuf;
 
+use futures_util::StreamExt;
 use serde::Serialize;
 use sift_engine::HttpClient;
+use tauri::ipc::Channel;
 use tauri::Manager;
+
+/// 单文件下载并发上限(2a;限速/暂停/续传留 2b)。
+const MAX_CONCURRENCY: usize = 4;
 
 /// 清洗文件名:路径分隔符与非法字符替为下划线,去首尾空白与点,截断超长,空则给默认名。
 fn sanitize_filename(name: &str) -> String {
@@ -104,49 +109,143 @@ fn file_name_for(url: &str, idx: usize, content_type: Option<&str>) -> String {
     format!("file_{idx}.{ext}")
 }
 
-/// 批量下载文件(图片/文件链接)到下载目录下的 `Sift/<subdir>/`,逐条返回结果。
-/// 顺序下载(温和),走引擎 client(宽容头);状态码 >=400 记为失败。
+/// 下载进度事件(经 Tauri Channel 实时回传给前端下载队列)。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DlEvent {
+    Queued { id: usize, name: String },
+    Progress {
+        id: usize,
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    Done { id: usize, path: String, size: u64 },
+    Failed { id: usize, error: String },
+}
+
+/// 列表里先用的展示名(URL 基名;无名则「文件 N」)。最终名完成时由路径更新。
+fn provisional_name(url: &str, id: usize) -> String {
+    let raw = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        format!("文件 {}", id + 1)
+    } else {
+        sanitize_filename(raw)
+    }
+}
+
+fn fail_result(url: &str, error: String) -> DownloadResult {
+    DownloadResult {
+        url: url.to_string(),
+        ok: false,
+        path: None,
+        size: 0,
+        error: Some(error),
+    }
+}
+
+/// 批量下载文件(图片/文件链接)到下载目录下的 `Sift/<subdir>/`,流式回传实时进度。
+/// 并发上限 MAX_CONCURRENCY;走引擎 client(宽容头);状态码 >=400 记为失败。
 #[tauri::command]
-pub async fn download_files(
+pub async fn download_files_live(
     app: tauri::AppHandle,
     urls: Vec<String>,
     subdir: String,
+    channel: Channel<DlEvent>,
 ) -> Result<DownloadBatch, String> {
     let dir = download_root(&app)?.join(sanitize_filename(&subdir));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let client = HttpClient::unlimited().map_err(|e| e.to_string())?;
+    let client = std::sync::Arc::new(HttpClient::unlimited().map_err(|e| e.to_string())?);
 
-    let mut results = Vec::with_capacity(urls.len());
-    for (idx, url) in urls.iter().enumerate() {
-        let fail = |error: String| DownloadResult {
-            url: url.clone(),
-            ok: false,
-            path: None,
-            size: 0,
-            error: Some(error),
-        };
-        let r = match client.download_bytes(url, 30_000).await {
-            Ok(f) if f.status < 400 => {
-                let path = dir.join(file_name_for(url, idx, f.content_type.as_deref()));
-                match std::fs::write(&path, &f.bytes) {
-                    Ok(()) => DownloadResult {
-                        url: url.clone(),
-                        ok: true,
-                        path: Some(path.to_string_lossy().into_owned()),
-                        size: f.bytes.len() as u64,
-                        error: None,
-                    },
-                    Err(e) => fail(e.to_string()),
+    // 各 future 持有 owned 克隆(Arc client / clone dir+channel / owned url),避免并发借用
+    // 引用带来的生命周期纠缠("FnOnce not general enough")。
+    let mut indexed: Vec<(usize, DownloadResult)> =
+        futures_util::stream::iter(urls.into_iter().enumerate())
+            .map(|(id, url)| {
+                let client = client.clone();
+                let dir = dir.clone();
+                let channel = channel.clone();
+                async move {
+                    let _ = channel.send(DlEvent::Queued {
+                        id,
+                        name: provisional_name(&url, id),
+                    });
+                    let mut last = 0u64;
+                    let result = match client
+                        .download_streamed(&url, 60_000, |downloaded, total| {
+                            // 限频:每 ~64KB 或起始时回传一次,避免刷屏。
+                            if downloaded == 0 || downloaded.saturating_sub(last) >= 65_536 {
+                                last = downloaded;
+                                let _ = channel.send(DlEvent::Progress {
+                                    id,
+                                    downloaded,
+                                    total,
+                                });
+                            }
+                        })
+                        .await
+                    {
+                        Ok(f) if f.status < 400 => {
+                            let path = dir.join(file_name_for(&url, id, f.content_type.as_deref()));
+                            match std::fs::write(&path, &f.bytes) {
+                                Ok(()) => {
+                                    let p = path.to_string_lossy().into_owned();
+                                    let size = f.bytes.len() as u64;
+                                    let _ = channel.send(DlEvent::Done {
+                                        id,
+                                        path: p.clone(),
+                                        size,
+                                    });
+                                    DownloadResult {
+                                        url,
+                                        ok: true,
+                                        path: Some(p),
+                                        size,
+                                        error: None,
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = channel.send(DlEvent::Failed {
+                                        id,
+                                        error: e.to_string(),
+                                    });
+                                    fail_result(&url, e.to_string())
+                                }
+                            }
+                        }
+                        Ok(f) => {
+                            let err = format!("HTTP {}", f.status);
+                            let _ = channel.send(DlEvent::Failed {
+                                id,
+                                error: err.clone(),
+                            });
+                            fail_result(&url, err)
+                        }
+                        Err(e) => {
+                            let _ = channel.send(DlEvent::Failed {
+                                id,
+                                error: e.to_string(),
+                            });
+                            fail_result(&url, e.to_string())
+                        }
+                    };
+                    (id, result)
                 }
-            }
-            Ok(f) => fail(format!("HTTP {}", f.status)),
-            Err(e) => fail(e.to_string()),
-        };
-        results.push(r);
-    }
+            })
+            .buffer_unordered(MAX_CONCURRENCY)
+            .collect()
+            .await;
+
+    indexed.sort_by_key(|(id, _)| *id);
     Ok(DownloadBatch {
         dir: dir.to_string_lossy().into_owned(),
-        results,
+        results: indexed.into_iter().map(|(_, r)| r).collect(),
     })
 }
 

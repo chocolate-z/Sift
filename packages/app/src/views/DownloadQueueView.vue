@@ -5,13 +5,14 @@ import { useDownloadsStore, type DlStatus } from '@/stores/downloads'
 const store = useDownloadsStore()
 
 const downloadingCount = computed(() => store.items.filter((i) => i.status === 'downloading').length)
-// 并发显示封顶到上限 2(引擎只会同时跑 2 个,多出的概念上排队)
-const activeSlots = computed(() => Math.min(downloadingCount.value, 2))
-// 总进度:有进度项的平均(空队列为 0)。
+const doneCount = computed(() => store.items.filter((i) => i.status === 'done').length)
+// 并发显示封顶到上限 4(引擎同时跑 4 个,多出的排队)。
+const activeSlots = computed(() => Math.min(downloadingCount.value, 4))
+// 总进度:全部条目进度平均(done 计 100;空队列为 0)。
 const totalProgress = computed(() => {
-  const withP = store.items.filter((i) => i.progress != null)
-  if (!withP.length) return 0
-  return Math.round(withP.reduce((s, i) => s + (i.progress ?? 0), 0) / withP.length)
+  if (!store.items.length) return 0
+  const sum = store.items.reduce((s, i) => s + (i.status === 'done' ? 100 : (i.progress ?? 0)), 0)
+  return Math.round(sum / store.items.length)
 })
 
 function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
@@ -25,11 +26,11 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
   <section class="view queue">
     <header class="head">
       <h1>下载队列</h1>
-      <p class="sub">支持并发、限速与断点续传 · 暂停后可续传</p>
+      <p class="sub">并发下载文件到本地 · 实时进度</p>
       <div class="stats">
         <span class="stat">
           并发
-          <span class="mono accent">{{ activeSlots }} / 2</span>
+          <span class="mono accent">{{ activeSlots }} / 4</span>
         </span>
         <span class="stat">
           队列
@@ -40,12 +41,11 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
           <span class="mono v">{{ totalProgress }}%</span>
         </span>
         <span class="stat">
-          速度
-          <span class="mono ok">{{ downloadingCount ? '680 KB/s' : '0 KB/s' }}</span>
+          完成
+          <span class="mono ok">{{ doneCount }} / {{ store.items.length }}</span>
         </span>
         <div class="stat-right">
-          <button type="button" class="btn-soft" @click="store.pauseAll()">全部暂停</button>
-          <button type="button" class="btn-soft" @click="store.resumeAll()">全部继续</button>
+          <button type="button" class="btn-soft" :disabled="store.running" @click="store.clear()">清空</button>
         </div>
       </div>
     </header>
@@ -67,47 +67,31 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
               <span class="dot pulse" />
               下载中
             </span>
-            <span v-else-if="it.status === 'paused'" class="dl-stat paused">
-              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#E0A85A" stroke-width="1.6">
-                <rect x="4" y="3" width="3" height="10" rx="1" />
-                <rect x="9" y="3" width="3" height="10" rx="1" />
-              </svg>
-              已暂停
-            </span>
             <span v-else-if="it.status === 'waiting'" class="dl-stat waiting">
               <span class="dot" />
               等待
+            </span>
+            <span v-else-if="it.status === 'done'" class="dl-stat done">
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="#34D399"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M3 8.5l3 3 7-7" />
+              </svg>
+              完成
             </span>
             <span v-else class="dl-stat failed">
               <span class="dot" />
               {{ it.failReason }}
             </span>
 
-            <!-- 动作 -->
-            <button v-if="it.status === 'paused'" type="button" class="mini-btn primary" @click="store.resume(it.id)">
-              续传
-            </button>
-            <button v-if="it.status === 'failed'" type="button" class="mini-btn" @click="store.retry(it.id)">
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round">
-                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5V5H11" />
-              </svg>
-              重试
-            </button>
-            <span v-if="it.status === 'downloading'" class="ico-btn" @click="store.pause(it.id)">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="4" y="3" width="3" height="10" rx="1" />
-                <rect x="9" y="3" width="3" height="10" rx="1" />
-              </svg>
-            </span>
-            <span class="ico-btn del" :class="{ dim: it.progress == null }" @click="store.remove(it.id)">
+            <!-- 动作:从队列移除(不删盘上文件) -->
+            <span class="ico-btn del" @click="store.remove(it.id)">
               <svg
                 width="14"
                 height="14"
@@ -122,14 +106,12 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
 
           <div v-if="it.progress != null" class="dl-prog">
             <div class="bar">
-              <div
-                class="bar-fill"
-                :class="it.status === 'paused' ? 'gray' : 'purple'"
-                :style="{ width: it.progress + '%' }" />
+              <div class="bar-fill purple" :style="{ width: it.progress + '%' }" />
             </div>
-            <span class="pct mono" :class="it.status === 'paused' ? 'gray' : 'accent'">{{ it.progress }}%</span>
+            <span class="pct mono accent">{{ it.progress }}%</span>
             <span class="detail mono">{{ it.detail }}</span>
           </div>
+          <div v-else-if="it.detail" class="dl-detail mono">{{ it.detail }}</div>
         </div>
       </div>
 
@@ -290,6 +272,9 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
 .dl-stat.waiting {
   color: var(--text-secondary);
 }
+.dl-stat.done {
+  color: #34d399;
+}
 .dl-stat.failed {
   color: #f1837d;
 }
@@ -385,6 +370,10 @@ function nameColor(s: DlStatus): 'white' | 'dim' | 'gray' {
 }
 .detail {
   flex: none;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.dl-detail {
   font-size: 10.5px;
   color: var(--text-secondary);
 }

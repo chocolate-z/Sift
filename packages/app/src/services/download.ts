@@ -25,9 +25,22 @@ export interface DownloadBatch {
   results: DownloadResult[]
 }
 
-/** 批量下载文件链接到下载目录下的 Sift/<subdir>/,逐条返回结果。 */
-export async function downloadFiles(urls: string[], subdir: string): Promise<DownloadBatch> {
+/** 下载进度事件(后端经 Tauri Channel 实时回传)。 */
+export type DlEvent =
+  | { kind: 'queued'; id: number; name: string }
+  | { kind: 'progress'; id: number; downloaded: number; total: number | null }
+  | { kind: 'done'; id: number; path: string; size: number }
+  | { kind: 'failed'; id: number; error: string }
+
+/** 批量下载文件链接到 Sift/<subdir>/,经 Channel 实时回传进度;Promise 在全部结束时 resolve。 */
+export async function downloadFilesLive(
+  urls: string[],
+  subdir: string,
+  onEvent: (e: DlEvent) => void
+): Promise<DownloadBatch> {
   if (!isTauri) throw new Error('文件下载仅桌面端可用')
-  const { invoke } = await import('@tauri-apps/api/core')
-  return invoke<DownloadBatch>('download_files', { urls, subdir })
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<DlEvent>()
+  channel.onmessage = onEvent
+  return invoke<DownloadBatch>('download_files_live', { urls, subdir, channel })
 }

@@ -30,7 +30,7 @@ pub fn run() {
       storage_cmd::db_load_dataset,
       storage_cmd::db_delete_dataset,
       download_cmd::save_text_file,
-      download_cmd::download_files
+      download_cmd::download_files_live
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

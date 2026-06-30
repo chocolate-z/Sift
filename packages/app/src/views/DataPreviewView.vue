@@ -10,13 +10,15 @@ import {
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
 import { useCompletedStore } from '@/stores/completed'
+import { useDownloadsStore } from '@/stores/downloads'
 import { downloadText, toMergedText, toCsv, toJson, toTxt } from '@/utils/export'
 import { deleteDataset, listDatasets, loadDataset, storageAvailable, type SavedDatasetMeta } from '@/services/storage'
-import { downloadFiles, saveTextFile } from '@/services/download'
+import { saveTextFile } from '@/services/download'
 
 const router = useRouter()
 const ds = useDatasetStore()
 const completed = useCompletedStore()
+const downloads = useDownloadsStore()
 
 // 含「内容」列的数据集才给「导出文本 TXT」(把抓到的文本合并为一个文档)。
 const hasText = computed(() => ds.active && ds.columns.some((c) => c.name === '内容'))
@@ -61,10 +63,9 @@ function cellClass(field: string, type?: string) {
 }
 // 可下载列(图片/链接类型),其值为文件 URL。
 const fileColumns = computed(() => ds.columns.filter((c) => c.type === 'image' || c.type === 'url'))
-const dlSaving = ref(false)
-// 批量下载:收集选中行 图片/链接 列里的绝对 URL → 经 Tauri 下载到本地 → 记入「已完成」。
-async function downloadSelected() {
-  if (selectedCount.value === 0 || dlSaving.value) return
+// 批量下载:收集选中行 图片/链接 列里的绝对 URL → 交下载队列(并发+实时进度)→ 跳下载队列屏。
+function downloadSelected() {
+  if (selectedCount.value === 0) return
   const urls: string[] = []
   ds.rows.forEach((r, i) => {
     if (!selected.value[i]) return
@@ -76,32 +77,11 @@ async function downloadSelected() {
   const unique = [...new Set(urls)]
   if (!unique.length) return flashExport('选中行没有可下载的文件链接(图片/链接列)')
   if (!storageAvailable) return flashExport('文件下载仅桌面端可用')
-  const subdir = (ds.sourceName || '采集结果').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60)
-  dlSaving.value = true
-  try {
-    const batch = await downloadFiles(unique, subdir)
-    if (cancelled) return
-    const ok = batch.results.filter((r) => r.ok)
-    const bytes = ok.reduce((s, r) => s + r.size, 0)
-    const size = bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
-    if (ok.length) {
-      completed.add({
-        name: `${subdir} · 文件`,
-        fileType: '图片',
-        icon: 'img',
-        path: batch.dir,
-        size,
-        count: `${ok.length}/${unique.length} 个`,
-        time: '刚刚',
-        source: `来源 ${ds.sourceName || '采集结果'}`
-      })
-    }
-    flashExport(`已下载 ${ok.length}/${unique.length} 个 · ${size} → ${batch.dir}`)
-  } catch (e) {
-    flashExport(`下载失败:${e instanceof Error ? e.message : String(e)}`)
-  } finally {
-    dlSaving.value = false
-  }
+  const source = ds.sourceName || '采集结果'
+  const subdir = source.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60)
+  // 不 await:下载在下载队列屏实时显示进度(队列 store 持有生命周期)。
+  downloads.startBatch(unique, subdir, source)
+  router.push('/downloads')
 }
 
 // 导出当前数据集。CSV/JSON/TXT 真导出;Excel/EPUB 待实现。仅真实数据(跑过引擎)可导。
@@ -388,12 +368,7 @@ onMounted(async () => {
             </svg>
             {{ saving ? '保存中…' : '导出文本 TXT' }}
           </button>
-          <button
-            v-else
-            type="button"
-            class="btn-dl"
-            :disabled="selectedCount === 0 || dlSaving"
-            @click="downloadSelected">
+          <button v-else type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
             <svg
               width="13"
               height="13"
@@ -405,7 +380,7 @@ onMounted(async () => {
               stroke-linejoin="round">
               <path d="M8 3v7M5 7.5l3 2.7 3-2.7M3.5 13h9" />
             </svg>
-            {{ dlSaving ? '下载中…' : '批量下载' }}
+            批量下载
           </button>
         </div>
       </div>
