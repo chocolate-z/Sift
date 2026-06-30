@@ -5,6 +5,7 @@ import { compileCatalogRule, compileSearchRule, parseBookSource, type ParseResul
 import type { Rule } from '@sift/core-ir'
 import { SAMPLE_SOURCES } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
+import { saveDataset } from '@/services/storage'
 import { useDatasetStore } from '@/stores/dataset'
 
 const router = useRouter()
@@ -62,13 +63,11 @@ async function runCompiled(rule: Rule) {
       runNotice.value = `未解析到数据(0 条)。${tail || '检查关键词、选择器或站点是否可达'}`
       return
     }
-    dataset.setResult(
-      // 引擎 RunOutput.records 以列显示名为键(assemble_output 用 col.name),故 field 取 name。
-      rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type })),
-      out.records,
-      rule.meta.name,
-      out.warnings
-    )
+    // 引擎 RunOutput.records 以列显示名为键(assemble_output 用 col.name),故 field 取 name。
+    const cols = rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type }))
+    dataset.setResult(cols, out.records, rule.meta.name, out.warnings)
+    // 落库留存(best-effort,失败不影响预览)。
+    saveDataset(rule.meta.name, rule.meta.name, cols, out.records).catch(() => {})
     router.push('/data')
   } catch (e) {
     // Tauri 命令以 Err(String) 拒绝,catch 到的是字符串而非 Error。

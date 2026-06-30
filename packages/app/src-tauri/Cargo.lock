@@ -95,6 +95,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sift-engine",
+ "sift-storage",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
 import { downloadText, toCsv, toJson, toTxt } from '@/utils/export'
+import { listDatasets, loadDataset, storageAvailable } from '@/services/storage'
 
 const router = useRouter()
 const ds = useDatasetStore()
@@ -94,6 +95,20 @@ function doExport(format: string) {
 }
 onBeforeUnmount(() => {
   if (exportTimer) clearTimeout(exportTimer)
+})
+
+// 本会话未跑引擎时,从本地库恢复最近一次采集结果(跨重启留存)。
+onMounted(async () => {
+  if (ds.active || !storageAvailable) return
+  try {
+    const metas = await listDatasets()
+    const top = metas[0]
+    if (!top) return
+    const blob = await loadDataset(top.id)
+    if (blob) ds.setResult(blob.columns, blob.rows, top.source || top.name, [])
+  } catch {
+    // 忽略:无库 / 读取失败时维持种子演示。
+  }
 })
 </script>
 

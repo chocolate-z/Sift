@@ -1,4 +1,7 @@
 mod engine_cmd;
+mod storage_cmd;
+
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,11 +14,20 @@ pub fn run() {
             .build(),
         )?;
       }
+      // 本地库:应用数据目录下 sift.db。
+      let dir = app.path().app_data_dir()?;
+      std::fs::create_dir_all(&dir)?;
+      let db = sift_storage::Db::open(dir.join("sift.db"))?;
+      app.manage(db);
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
       engine_cmd::engine_run_rule,
-      engine_cmd::engine_version
+      engine_cmd::engine_version,
+      storage_cmd::db_save_dataset,
+      storage_cmd::db_list_datasets,
+      storage_cmd::db_load_dataset,
+      storage_cmd::db_delete_dataset
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -13,6 +13,7 @@ pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
 /// 已存数据集的元信息(列表用)。
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatasetMeta {
     pub id: i64,
     pub name: String,
