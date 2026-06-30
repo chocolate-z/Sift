@@ -9,7 +9,7 @@ import {
   type ParseResult
 } from '@sift/source-parser'
 import type { Rule } from '@sift/core-ir'
-import { SAMPLE_SOURCES } from '@/data/sampleSources'
+import { EXAMPLE_RULE } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
 import { saveDataset } from '@/services/storage'
 import { useDatasetStore } from '@/stores/dataset'
@@ -17,12 +17,12 @@ import { useDatasetStore } from '@/stores/dataset'
 const router = useRouter()
 const dataset = useDatasetStore()
 
-const input = ref(JSON.stringify(SAMPLE_SOURCES.jgb, null, 2))
+const input = ref(JSON.stringify(EXAMPLE_RULE, null, 2))
 const result = ref<ParseResult | null>(null)
 const error = ref<string | null>(null)
 const rawObj = ref<Record<string, unknown> | null>(null)
 
-const keyword = ref('剑来')
+const keyword = ref('')
 const running = ref(false)
 const runError = ref<string | null>(null)
 const runNotice = ref<string | null>(null)
@@ -48,8 +48,8 @@ function parse() {
     error.value = `规则解析出错:${(e as Error).message}`
   }
 }
-function loadSample(key: 'qimao' | 'jgb') {
-  input.value = JSON.stringify(SAMPLE_SOURCES[key], null, 2)
+function loadExample() {
+  input.value = JSON.stringify(EXAMPLE_RULE, null, 2)
   parse()
 }
 
@@ -113,7 +113,7 @@ onMounted(parse)
       <div class="head-row">
         <div>
           <h1>粘贴规则</h1>
-          <p class="sub">粘贴书源 JSON,Sift 现场解析(本地、不联网)· 由 @sift/source-parser 真实解析</p>
+          <p class="sub">粘贴采集规则 JSON,Sift 现场解析(本地、不联网)</p>
         </div>
         <button type="button" class="btn-soft" @click="router.push('/import')">卡片视图 ›</button>
       </div>
@@ -123,11 +123,9 @@ onMounted(parse)
       <!-- 左:编辑器 -->
       <div class="editor">
         <div class="ed-bar">
-          <span class="ed-label">书源 JSON</span>
+          <span class="ed-label">采集规则 JSON</span>
           <span class="ed-samples">
-            示例
-            <button type="button" class="chip-btn" @click="loadSample('qimao')">七猫 API</button>
-            <button type="button" class="chip-btn" @click="loadSample('jgb')">旧钢笔 网页</button>
+            <button type="button" class="chip-btn" @click="loadExample">载入示例</button>
           </span>
         </div>
         <textarea v-model="input" class="ed-area mono" spellcheck="false" />
@@ -145,24 +143,25 @@ onMounted(parse)
         </div>
 
         <template v-else-if="result">
-          <!-- 搜索预览 · 接采集引擎 -->
+          <!-- 采集预览 · 接引擎 -->
           <div class="rpanel run-panel">
-            <div class="rp-title">搜索预览 · 接采集引擎</div>
+            <div class="rp-title">采集预览 · 接引擎</div>
             <div class="run-row">
               <input
                 v-model="keyword"
                 class="kw-input mono"
-                placeholder="关键词,如 剑来"
+                placeholder="关键词"
                 spellcheck="false"
                 @keyup.enter="runSearch" />
               <button type="button" class="btn-run" :disabled="running" @click="runSearch">
                 {{ running ? '运行中…' : '搜索预览' }}
               </button>
-              <button type="button" class="btn-run alt" :disabled="running" @click="runCatalog">采集目录</button>
-              <button type="button" class="btn-run alt" :disabled="running" @click="runBook">采集正文</button>
+              <button type="button" class="btn-run alt" :disabled="running" @click="runCatalog">抓子列表</button>
+              <button type="button" class="btn-run alt" :disabled="running" @click="runBook">跟随子页面</button>
             </div>
             <div class="run-hint">
-              搜索预览 = 结果书单;采集目录 = 每本书的章节列表;采集正文 = 前几章正文(3 步链路,请求较多·已限速限章)
+              搜索预览 = 结果列表;抓子列表 = 每条结果的子项列表;跟随子页面 = 进入前几个子页抓内容(3
+              步链路,请求较多·已限速限量)
             </div>
             <div v-if="runError" class="run-msg err">✕ {{ runError }}</div>
             <div v-else-if="runNotice" class="run-msg notice">{{ runNotice }}</div>
@@ -233,9 +232,9 @@ onMounted(parse)
             </div>
           </div>
 
-          <!-- 正文过滤(Base64 解码) -->
+          <!-- 内容过滤(Base64 解码) -->
           <div v-if="result.contentFilters.length" class="rpanel">
-            <div class="rp-title">正文过滤 · {{ result.contentFilters.length }} 条</div>
+            <div class="rp-title">内容过滤 · {{ result.contentFilters.length }} 条</div>
             <div v-for="(f, i) in result.contentFilters" :key="i" class="filter">
               <span class="f-status" :class="f.status">{{ f.status === 'decoded' ? 'Base64 已解码' : '原样' }}</span>
               <span class="f-text mono">{{ f.decoded ?? f.raw }}</span>
