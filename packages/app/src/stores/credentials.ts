@@ -13,16 +13,9 @@ export interface Cred {
   lastUse: string
 }
 
-const SEED: Omit<Cred, 'id'>[] = [
-  { name: '七猫账号 Cookie', domain: 'www.qimao.com', type: 'Cookie', status: 'valid', lastUse: '2 分钟前' },
-  { name: '旧钢笔会话', domain: 'www.jiugangbi.com', type: 'Cookie', status: 'expiring', lastUse: '1 小时前' },
-  { name: '本地代理', domain: 'http://127.0.0.1:7890', type: '代理', status: 'valid', lastUse: '使用中' },
-  { name: '书城 API Token', domain: 'book.example.com', type: 'Token', status: 'invalid', lastUse: '3 天前' }
-]
-
 export const useCredentialsStore = defineStore('credentials', () => {
   let uid = 0
-  const creds = ref<Cred[]>(SEED.map((c) => ({ id: ++uid, ...c })))
+  const creds = ref<Cred[]>([])
 
   function addCred(c: Omit<Cred, 'id'>) {
     creds.value.unshift({ id: ++uid, ...c })

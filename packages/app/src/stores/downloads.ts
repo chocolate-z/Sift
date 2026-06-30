@@ -13,43 +13,8 @@ export interface DlItem {
   failReason?: string
 }
 
-const SEED: Omit<DlItem, 'id'>[] = [
-  {
-    name: '诡秘之主/第0048章·深红.txt',
-    fileType: '文本',
-    status: 'downloading',
-    progress: 72,
-    detail: '1.2 / 1.7 MB · 420 KB/s · 3s'
-  },
-  {
-    name: '封面_qimao_12345.jpg',
-    fileType: '图片',
-    status: 'downloading',
-    progress: 35,
-    detail: '86 / 240 KB · 260 KB/s · 1s'
-  },
-  {
-    name: '诡秘之主/第0040章·星之子.txt',
-    fileType: '文本',
-    status: 'paused',
-    progress: 48,
-    detail: '已下 820 KB · 断点已保存'
-  },
-  { name: '诡秘之主/第0051章·黑夜.txt', fileType: '文本', status: 'waiting', progress: null, detail: '' },
-  { name: '封面_qimao_12346.jpg', fileType: '图片', status: 'waiting', progress: null, detail: '' },
-  {
-    name: '诡秘之主/第0042章·愚者.txt',
-    fileType: '文本',
-    status: 'failed',
-    progress: null,
-    detail: '',
-    failReason: '失败 · 超时'
-  }
-]
-
 export const useDownloadsStore = defineStore('downloads', () => {
-  let uid = 0
-  const items = ref<DlItem[]>(SEED.map((s) => ({ id: ++uid, ...s })))
+  const items = ref<DlItem[]>([])
   const find = (id: number) => items.value.find((x) => x.id === id)
 
   function pause(id: number) {
