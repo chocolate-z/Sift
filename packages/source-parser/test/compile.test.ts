@@ -14,7 +14,7 @@ describe('compileSearchRule — 七猫 (API/JSON)', () => {
   })
 
   it('entry is keyword + single search step', () => {
-    expect(rule.entry).toEqual({ kind: 'keyword', param: 'keyword', example: '剑来' })
+    expect(rule.entry).toEqual({ kind: 'keyword', param: 'keyword', example: '关键词' })
     expect(rule.steps).toHaveLength(1)
     expect(rule.steps[0]!.id).toBe('search')
     expect(rule.steps[0]!.fanout).toEqual({ kind: 'once' })
@@ -47,7 +47,7 @@ describe('compileSearchRule — 七猫 (API/JSON)', () => {
 
   it('output columns map friendly names ← raw fields', () => {
     const byField = Object.fromEntries(rule.output.columns.map((c) => [c.fromField, c]))
-    expect(byField.name!.name).toBe('书名')
+    expect(byField.name!.name).toBe('标题')
     expect(byField.cover!.type).toBe('image')
     expect(rule.output.columns.every((c) => c.fromStep === 'search')).toBe(true)
   })
@@ -126,11 +126,11 @@ describe('compileCatalogRule — 七猫 (template-id 链路)', () => {
     expect(parse.fields.chapter_id!.selector.expr).toBe('id')
   })
 
-  it('output columns: 书名 + 章节 + 章节ID', () => {
+  it('output columns: 标题 + 子项 + ID', () => {
     const names = rule.output.columns.map((c) => c.name)
-    expect(names).toContain('书名')
-    expect(names).toContain('章节')
-    expect(names).toContain('章节ID')
+    expect(names).toContain('标题')
+    expect(names).toContain('子项')
+    expect(names).toContain('ID')
   })
 })
 
@@ -187,9 +187,9 @@ describe('compileCatalogRule — 网页源缺 search_result.url 优雅降级', (
       (s) => s.request.url.kind === 'template' && s.request.url.template.includes('###book_url###')
     )
     expect(hasBookUrlTemplate).toBe(false)
-    // 仍输出书单列
-    expect(rule.output.columns.some((c) => c.name === '书名')).toBe(true)
-    expect(rule.output.columns.some((c) => c.name === '章节')).toBe(false)
+    // 仍输出列表列
+    expect(rule.output.columns.some((c) => c.name === '标题')).toBe(true)
+    expect(rule.output.columns.some((c) => c.name === '子项')).toBe(false)
   })
 })
 
@@ -226,7 +226,7 @@ describe('compileBookSource — 七猫 (template-id 正文链路)', () => {
   })
 
   it('output adds 正文 column, no pagination (single-page chapter)', () => {
-    expect(rule.output.columns.some((c) => c.name === '正文')).toBe(true)
+    expect(rule.output.columns.some((c) => c.name === '内容')).toBe(true)
     expect(rule.steps[2]!.pagination).toBeUndefined()
   })
 })
@@ -278,7 +278,7 @@ describe('compileBookSource — 旧钢笔 (extracted-url 正文链路 + content_
   })
 
   it('output columns: 书名 + 章节 + 章节标题 + 正文', () => {
-    expect(rule.output.columns.map((c) => c.name)).toEqual(['书名', '章节', '章节标题', '正文'])
+    expect(rule.output.columns.map((c) => c.name)).toEqual(['标题', '子项', '子页标题', '内容'])
   })
 })
 

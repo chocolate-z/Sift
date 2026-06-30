@@ -10,7 +10,7 @@ import {
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
 import { useCompletedStore } from '@/stores/completed'
-import { downloadText, toBookTxt, toCsv, toJson, toTxt } from '@/utils/export'
+import { downloadText, toMergedText, toCsv, toJson, toTxt } from '@/utils/export'
 import { deleteDataset, listDatasets, loadDataset, storageAvailable, type SavedDatasetMeta } from '@/services/storage'
 import { saveTextFile } from '@/services/download'
 
@@ -18,8 +18,8 @@ const router = useRouter()
 const ds = useDatasetStore()
 const completed = useCompletedStore()
 
-// 正文数据集(含「正文」列)才给「下载本书 TXT」。
-const isBook = computed(() => ds.active && ds.columns.some((c) => c.name === '正文'))
+// 含「内容」列的数据集才给「导出文本 TXT」(把抓到的文本合并为一个文档)。
+const hasText = computed(() => ds.active && ds.columns.some((c) => c.name === '内容'))
 
 const formats = ['CSV', 'JSON', 'Excel', 'TXT', 'EPUB']
 const exportFormat = ref('CSV')
@@ -89,14 +89,14 @@ function doExport(format: string) {
     flashExport(`导出失败:${e instanceof Error ? e.message : String(e)}`)
   }
 }
-// 下载本书:把正文数据集排版为单本 TXT,经 Tauri 写盘到下载目录,并记入「已完成」。
+// 导出文本:把含「内容」列的数据集排版为单个 TXT,经 Tauri 写盘到下载目录,并记入「已完成」。
 const saving = ref(false)
-async function downloadBook() {
-  if (!isBook.value || !ds.rows.length || saving.value) return
-  const safe = (String(ds.rows[0]?.['书名'] ?? '') || ds.sourceName || '采集结果')
+async function exportText() {
+  if (!hasText.value || !ds.rows.length || saving.value) return
+  const safe = (String(ds.rows[0]?.['标题'] ?? '') || ds.sourceName || '采集结果')
     .replace(/[\\/:*?"<>|\s]+/g, '_')
     .slice(0, 60)
-  const content = toBookTxt(ds.columns, ds.rows)
+  const content = toMergedText(ds.columns, ds.rows)
   const bytes = new Blob([content]).size
   const size = bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
   saving.value = true
@@ -109,11 +109,11 @@ async function downloadBook() {
       icon: 'txt',
       path,
       size,
-      count: `${ds.rows.length} 章`,
+      count: `${ds.rows.length} 条`,
       time: '刚刚',
       source: `来源 ${ds.sourceName || '采集结果'}`
     })
-    flashExport(`已保存 ${ds.rows.length} 章 · ${size} → ${path}`)
+    flashExport(`已保存 ${ds.rows.length} 条 · ${size} → ${path}`)
   } catch (e) {
     flashExport(`保存失败:${e instanceof Error ? e.message : String(e)}`)
   } finally {
@@ -334,7 +334,7 @@ onMounted(async () => {
               </DropdownMenuContent>
             </DropdownMenuPortal>
           </DropdownMenuRoot>
-          <button v-if="isBook" type="button" class="btn-dl" :disabled="saving" @click="downloadBook">
+          <button v-if="hasText" type="button" class="btn-dl" :disabled="saving" @click="exportText">
             <svg
               width="13"
               height="13"
@@ -346,7 +346,7 @@ onMounted(async () => {
               stroke-linejoin="round">
               <path d="M8 3v7M5 7.5l3 2.7 3-2.7M3.5 13h9" />
             </svg>
-            {{ saving ? '保存中…' : '下载本书 TXT' }}
+            {{ saving ? '保存中…' : '导出文本 TXT' }}
           </button>
           <button v-else type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
             <svg

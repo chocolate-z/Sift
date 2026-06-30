@@ -37,10 +37,10 @@ import type { FieldRule as SpFieldRule, RawBookSource } from './types'
 const DISPLAY_FIELDS = ['name', 'author', 'newest', 'remark', 'cover'] as const
 
 const FIELD_LABELS: Record<string, string> = {
-  name: '书名',
+  name: '标题',
   author: '作者',
-  newest: '最新章节',
-  remark: '简介',
+  newest: '最新',
+  remark: '描述',
   cover: '封面'
 }
 
@@ -121,14 +121,14 @@ export function compileSearchRule(raw: RawBookSource): Rule {
   const entry: EntryPoint = {
     kind: 'keyword',
     param: keywordParam,
-    example: '剑来'
+    example: '关键词'
   }
 
   const vars: VarDecl[] = [{ name: keywordParam, origin: 'input', required: true }]
 
   const meta: RuleMeta = {
     id: raw.source_url ?? raw.source_name ?? 'book-source',
-    name: raw.source_name ?? '书源',
+    name: raw.source_name ?? '采集源',
     origin: 'book-source',
     sourceType: detection.type
   }
@@ -261,22 +261,22 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
     if (raw.item_name) {
       catalogFields.chapter_name = {
         selector: { engine: 'jsonpath', expr: normalizeOrRaw(raw.item_name), fallbacks: [], extract: { mode: 'text' } },
-        label: '章节名'
+        label: '子项'
       }
     }
     if (raw.item_id) {
       catalogFields.chapter_id = {
         selector: { engine: 'jsonpath', expr: normalizeOrRaw(raw.item_id), fallbacks: [], extract: { mode: 'text' } },
-        label: '章节ID'
+        label: 'ID'
       }
-      thirdCol = { name: '章节ID', fromField: 'chapter_id', fromStep: 'catalog', type: 'string' }
+      thirdCol = { name: 'ID', fromField: 'chapter_id', fromStep: 'catalog', type: 'string' }
     }
   } else {
     // 旧钢笔:book_menu 直取 <a>,章节名=自身文本,链接=自身 href(空选择器自取)。
     const attr = typeof raw.book_menu_attr === 'string' && raw.book_menu_attr ? raw.book_menu_attr : 'href'
     catalogFields.chapter_name = {
       selector: { engine: 'css', expr: '', fallbacks: [], extract: { mode: 'text' } },
-      label: '章节名'
+      label: '子项'
     }
     catalogFields.chapter_url = {
       selector: {
@@ -286,7 +286,7 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
         extract: { mode: 'attr', name: attr },
         pipeline: [{ op: 'resolveUrl' }]
       },
-      label: '章节链接'
+      label: '链接'
     }
     thirdCol = { name: '链接', fromField: 'chapter_url', fromStep: 'catalog', type: 'url' }
   }
@@ -311,10 +311,10 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
 
   // 输出:书名(搜索,下沉) + 章节 +(链接/章节ID);仅搜索降级时只输出书单列。
   const columns: OutputColumn[] = []
-  if (searchFields.name) columns.push({ name: '书名', fromField: 'name', fromStep: 'search', type: 'string' })
+  if (searchFields.name) columns.push({ name: '标题', fromField: 'name', fromStep: 'search', type: 'string' })
   if (searchFields.author) columns.push({ name: '作者', fromField: 'author', fromStep: 'search', type: 'string' })
   if (canBuildCatalog && catalogFields.chapter_name)
-    columns.push({ name: '章节', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
+    columns.push({ name: '子项', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
   if (canBuildCatalog && thirdCol) columns.push(thirdCol)
 
   const vars: VarDecl[] = [{ name: keywordParam, origin: 'input', required: true }]
@@ -324,14 +324,14 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
 
   const meta: RuleMeta = {
     id: raw.source_url ?? raw.source_name ?? 'book-source',
-    name: raw.source_name ?? '书源',
+    name: raw.source_name ?? '采集源',
     origin: 'book-source',
     sourceType: detection.type
   }
   if (raw.source_url) meta.sourceUrl = raw.source_url
   if (raw.source_remark) meta.remark = raw.source_remark
 
-  const entry: EntryPoint = { kind: 'keyword', param: keywordParam, example: '剑来' }
+  const entry: EntryPoint = { kind: 'keyword', param: keywordParam, example: '关键词' }
 
   return {
     irVersion: 1,
@@ -407,7 +407,7 @@ export function compileBookSource(raw: RawBookSource): Rule {
   if (typeof raw.chapter_title === 'string' && raw.chapter_title.trim()) {
     chapterFields.chapter_title = {
       selector: { engine: 'css', expr: raw.chapter_title, fallbacks: [], extract: { mode: 'text' } },
-      label: '章节标题'
+      label: '子页标题'
     }
   }
   const contentSel: SelectorExpr = {
@@ -417,7 +417,7 @@ export function compileBookSource(raw: RawBookSource): Rule {
     extract: { mode: 'text' }
   }
   if (cleanOps.length) contentSel.pipeline = cleanOps
-  chapterFields.chapter_content = { selector: contentSel, label: '正文' }
+  chapterFields.chapter_content = { selector: contentSel, label: '内容' }
 
   // 正文翻页(旧钢笔 multi_page + next_btn):跟随「下一页」,appendContent 拼接同章多页。
   // next_val 是「下一页」按钮的**显示文本**:仅当 next 元素文本含之才继续翻(requireText),
@@ -435,22 +435,22 @@ export function compileBookSource(raw: RawBookSource): Rule {
 
   const chapterStep: CollectStep = {
     id: 'chapter',
-    name: '正文 · Chapter',
+    name: '子页 · Detail',
     request: chapterReq,
     parse: { shape: 'page', fields: chapterFields },
     fanout: { kind: 'perItem', overStep: 'catalog' }
   }
   if (pagination) chapterStep.pagination = pagination
 
-  // 输出:书名 + 章节 + [章节标题] + 正文(聚焦正文,省去作者/链接列)。
+  // 输出:标题 + 子项 + [子页标题] + 内容(聚焦内容,省去其余列)。
   const columns: OutputColumn[] = []
   if (catalogRule.steps[0]?.parse.fields.name)
-    columns.push({ name: '书名', fromField: 'name', fromStep: 'search', type: 'string' })
+    columns.push({ name: '标题', fromField: 'name', fromStep: 'search', type: 'string' })
   if (catalogStep.parse.fields.chapter_name)
-    columns.push({ name: '章节', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
+    columns.push({ name: '子项', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
   if (chapterFields.chapter_title)
-    columns.push({ name: '章节标题', fromField: 'chapter_title', fromStep: 'chapter', type: 'string' })
-  columns.push({ name: '正文', fromField: 'chapter_content', fromStep: 'chapter', type: 'string' })
+    columns.push({ name: '子页标题', fromField: 'chapter_title', fromStep: 'chapter', type: 'string' })
+  columns.push({ name: '内容', fromField: 'chapter_content', fromStep: 'chapter', type: 'string' })
 
   return {
     ...catalogRule,

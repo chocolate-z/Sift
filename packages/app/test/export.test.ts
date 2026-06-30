@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toBookTxt, toCsv, toJson, toTxt, type ExportColumn, type ExportRow } from '../src/utils/export'
+import { toMergedText, toCsv, toJson, toTxt, type ExportColumn, type ExportRow } from '../src/utils/export'
 
 const cols: ExportColumn[] = [
   { name: '书名', field: '书名' },
@@ -39,29 +39,29 @@ describe('export utils', () => {
     expect(lines[2]).toBe('逗号,引号"测试\t含 换行')
   })
 
-  it('toBookTxt lays out a novel: title header + per-chapter title/body', () => {
-    const bookCols: ExportColumn[] = [
-      { name: '书名', field: '书名' },
-      { name: '章节标题', field: '章节标题' },
-      { name: '正文', field: '正文' }
+  it('toMergedText lays out a document: title header + per-item subtitle/content', () => {
+    const docCols: ExportColumn[] = [
+      { name: '标题', field: '标题' },
+      { name: '子页标题', field: '子页标题' },
+      { name: '内容', field: '内容' }
     ]
-    const bookRows: ExportRow[] = [
-      { 书名: '诡秘之主', 章节标题: '第一章 绯红', 正文: '克莱恩睁开眼。' },
-      { 书名: '诡秘之主', 章节标题: '第二章 黄昏', 正文: '蒸汽与机械的时代。' }
+    const docRows: ExportRow[] = [
+      { 标题: '示例文档', 子页标题: '第一节', 内容: '第一段内容。' },
+      { 标题: '示例文档', 子页标题: '第二节', 内容: '第二段内容。' }
     ]
-    const txt = toBookTxt(bookCols, bookRows)
-    expect(txt.startsWith('诡秘之主\n')).toBe(true)
-    expect(txt).toContain('第一章 绯红\n\n克莱恩睁开眼。')
-    expect(txt).toContain('第二章 黄昏\n\n蒸汽与机械的时代。')
+    const txt = toMergedText(docCols, docRows)
+    expect(txt.startsWith('示例文档\n')).toBe(true)
+    expect(txt).toContain('第一节\n\n第一段内容。')
+    expect(txt).toContain('第二节\n\n第二段内容。')
   })
 
-  it('toBookTxt falls back to 章 column + 采集结果 title when 书名/章节标题 absent', () => {
+  it('toMergedText falls back to 子项 column + 采集结果 title when 标题/子页标题 absent', () => {
     const cols2: ExportColumn[] = [
-      { name: '章节', field: '章节' },
-      { name: '正文', field: '正文' }
+      { name: '子项', field: '子项' },
+      { name: '内容', field: '内容' }
     ]
-    const txt = toBookTxt(cols2, [{ 章节: '楔子', 正文: '正文内容' }])
+    const txt = toMergedText(cols2, [{ 子项: '条目一', 内容: '内容文本' }])
     expect(txt.startsWith('采集结果\n')).toBe(true)
-    expect(txt).toContain('楔子\n\n正文内容')
+    expect(txt).toContain('条目一\n\n内容文本')
   })
 })

@@ -34,20 +34,20 @@ export function toTxt(columns: ExportColumn[], rows: ExportRow[]): string {
 }
 
 /**
- * 把正文数据集排版为单本小说 TXT:书名抬头 + 每章「章节标题\n\n正文」。
- * 按列显示名识别字段(书名 / 章节标题|章节 / 正文);缺正文列则退化为仅标题清单。
+ * 把含「内容」列的数据集排版为单个文本文档:标题抬头 + 每条「子页标题\n\n内容」。
+ * 按列显示名识别字段(标题 / 子页标题|子项 / 内容);缺内容列则退化为仅标题清单。
  */
-export function toBookTxt(columns: ExportColumn[], rows: ExportRow[]): string {
+export function toMergedText(columns: ExportColumn[], rows: ExportRow[]): string {
   const fieldOf = (name: string) => columns.find((c) => c.name === name)?.field
-  const bookF = fieldOf('书名')
-  const titleF = fieldOf('章节标题') ?? fieldOf('章节')
-  const contentF = fieldOf('正文')
-  const bookTitle = (bookF && rows[0]?.[bookF]) || '采集结果'
-  const out: string[] = [bookTitle, '']
+  const docF = fieldOf('标题')
+  const itemF = fieldOf('子页标题') ?? fieldOf('子项')
+  const contentF = fieldOf('内容')
+  const docTitle = (docF && rows[0]?.[docF]) || '采集结果'
+  const out: string[] = [docTitle, '']
   for (const r of rows) {
-    const title = (titleF && r[titleF]) || ''
+    const item = (itemF && r[itemF]) || ''
     const content = (contentF && r[contentF]) || ''
-    if (title) out.push(title, '')
+    if (item) out.push(item, '')
     if (content) out.push(content, '')
     out.push('')
   }
