@@ -52,6 +52,9 @@ export const useCompletedStore = defineStore('completed', () => {
   let uid = 0
   const records = ref<DoneRecord[]>(SEED.map((r) => ({ id: ++uid, ...r })))
 
+  function add(rec: Omit<DoneRecord, 'id'>) {
+    records.value.unshift({ id: ++uid, ...rec })
+  }
   function remove(id: number) {
     const i = records.value.findIndex((x) => x.id === id)
     if (i >= 0) records.value.splice(i, 1)
@@ -60,5 +63,5 @@ export const useCompletedStore = defineStore('completed', () => {
     records.value = []
   }
 
-  return { records, remove, clear }
+  return { records, add, remove, clear }
 })

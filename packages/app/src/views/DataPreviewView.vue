@@ -9,11 +9,17 @@ import {
   DropdownMenuTrigger
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
-import { downloadText, toCsv, toJson, toTxt } from '@/utils/export'
+import { useCompletedStore } from '@/stores/completed'
+import { downloadText, toBookTxt, toCsv, toJson, toTxt } from '@/utils/export'
 import { deleteDataset, listDatasets, loadDataset, storageAvailable, type SavedDatasetMeta } from '@/services/storage'
+import { saveTextFile } from '@/services/download'
 
 const router = useRouter()
 const ds = useDatasetStore()
+const completed = useCompletedStore()
+
+// 正文数据集(含「正文」列)才给「下载本书 TXT」。
+const isBook = computed(() => ds.active && ds.columns.some((c) => c.name === '正文'))
 
 const formats = ['CSV', 'JSON', 'Excel', 'TXT', 'EPUB']
 const exportFormat = ref('CSV')
@@ -93,6 +99,38 @@ function doExport(format: string) {
     flashExport(`导出失败:${e instanceof Error ? e.message : String(e)}`)
   }
 }
+// 下载本书:把正文数据集排版为单本 TXT,经 Tauri 写盘到下载目录,并记入「已完成」。
+const saving = ref(false)
+async function downloadBook() {
+  if (!isBook.value || !ds.rows.length || saving.value) return
+  const safe = (String(ds.rows[0]?.['书名'] ?? '') || ds.sourceName || '采集结果')
+    .replace(/[\\/:*?"<>|\s]+/g, '_')
+    .slice(0, 60)
+  const content = toBookTxt(ds.columns, ds.rows)
+  const bytes = new Blob([content]).size
+  const size = bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  saving.value = true
+  try {
+    const path = await saveTextFile(`${safe}.txt`, content)
+    if (cancelled) return
+    completed.add({
+      name: `${safe}.txt`,
+      fileType: '文本',
+      icon: 'txt',
+      path,
+      size,
+      count: `${ds.rows.length} 章`,
+      time: '刚刚',
+      source: `来源 ${ds.sourceName || '采集结果'}`
+    })
+    flashExport(`已保存 ${ds.rows.length} 章 · ${size} → ${path}`)
+  } catch (e) {
+    flashExport(`保存失败:${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    saving.value = false
+  }
+}
+
 let cancelled = false
 onBeforeUnmount(() => {
   cancelled = true
@@ -306,7 +344,21 @@ onMounted(async () => {
               </DropdownMenuContent>
             </DropdownMenuPortal>
           </DropdownMenuRoot>
-          <button type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
+          <button v-if="isBook" type="button" class="btn-dl" :disabled="saving" @click="downloadBook">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="#fff"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M8 3v7M5 7.5l3 2.7 3-2.7M3.5 13h9" />
+            </svg>
+            {{ saving ? '保存中…' : '下载本书 TXT' }}
+          </button>
+          <button v-else type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
             <svg
               width="13"
               height="13"

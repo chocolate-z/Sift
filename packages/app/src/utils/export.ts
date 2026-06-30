@@ -33,6 +33,27 @@ export function toTxt(columns: ExportColumn[], rows: ExportRow[]): string {
   return [header, ...body].join('\n')
 }
 
+/**
+ * 把正文数据集排版为单本小说 TXT:书名抬头 + 每章「章节标题\n\n正文」。
+ * 按列显示名识别字段(书名 / 章节标题|章节 / 正文);缺正文列则退化为仅标题清单。
+ */
+export function toBookTxt(columns: ExportColumn[], rows: ExportRow[]): string {
+  const fieldOf = (name: string) => columns.find((c) => c.name === name)?.field
+  const bookF = fieldOf('书名')
+  const titleF = fieldOf('章节标题') ?? fieldOf('章节')
+  const contentF = fieldOf('正文')
+  const bookTitle = (bookF && rows[0]?.[bookF]) || '采集结果'
+  const out: string[] = [bookTitle, '']
+  for (const r of rows) {
+    const title = (titleF && r[titleF]) || ''
+    const content = (contentF && r[contentF]) || ''
+    if (title) out.push(title, '')
+    if (content) out.push(content, '')
+    out.push('')
+  }
+  return out.join('\n')
+}
+
 /** 触发浏览器/WebView 下载一段文本(Blob + 隐藏 <a>)。 */
 export function downloadText(filename: string, content: string, mime = 'text/plain;charset=utf-8'): void {
   const blob = new Blob([content], { type: mime })
