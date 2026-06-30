@@ -64,7 +64,10 @@ async function runCompiled(rule: Rule) {
     // 避免恢复逻辑把上一次的旧结果当成本次结果。仅非空才落库。
     dataset.setResult(cols, out.records, rule.meta.name, out.warnings)
     if (out.records.length) {
-      saveDataset(rule.meta.name, rule.meta.name, cols, out.records).catch(() => {})
+      // 落库后回填 id,供数据预览的历史列表高亮「当前」这一条(失败则保持 null)。
+      saveDataset(rule.meta.name, rule.meta.name, cols, out.records)
+        .then((id) => dataset.setCurrentId(id))
+        .catch(() => {})
     }
     router.push('/data')
   } catch (e) {

@@ -10,7 +10,7 @@ import {
 } from 'reka-ui'
 import { useDatasetStore } from '@/stores/dataset'
 import { downloadText, toCsv, toJson, toTxt } from '@/utils/export'
-import { listDatasets, loadDataset, storageAvailable } from '@/services/storage'
+import { deleteDataset, listDatasets, loadDataset, storageAvailable, type SavedDatasetMeta } from '@/services/storage'
 
 const router = useRouter()
 const ds = useDatasetStore()
@@ -99,19 +99,96 @@ onBeforeUnmount(() => {
   if (exportTimer) clearTimeout(exportTimer)
 })
 
+// 历史数据集(本地库已存的多次采集),头部「历史」下拉列出 → 切换 / 删除。
+const histOpen = ref(false)
+const history = ref<SavedDatasetMeta[]>([])
+
+async function refreshHistory() {
+  if (!storageAvailable) return
+  try {
+    history.value = await listDatasets()
+  } catch {
+    history.value = []
+  }
+}
+// 打开下拉时刷新一遍,反映最新落库结果。
+watch(histOpen, (open) => {
+  if (open) refreshHistory()
+})
+
+// SQLite datetime('now') 为 UTC、空格分隔且无时区标记;补 T/Z 以 UTC 解析后转相对时间。
+function relTime(s: string): string {
+  const t = Date.parse(s.replace(' ', 'T') + 'Z')
+  if (Number.isNaN(t)) return s
+  const min = Math.floor((Date.now() - t) / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} 小时前`
+  const d = Math.floor(h / 24)
+  if (d < 7) return `${d} 天前`
+  const dt = new Date(t)
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}
+
+async function loadInto(m: SavedDatasetMeta): Promise<boolean> {
+  const blob = await loadDataset(m.id)
+  if (cancelled || !blob) return false
+  ds.setResult(blob.columns, blob.rows, m.source || m.name, [])
+  ds.setCurrentId(m.id)
+  return true
+}
+
+async function switchTo(m: SavedDatasetMeta) {
+  histOpen.value = false
+  if (m.id === ds.currentId) return
+  try {
+    await loadInto(m)
+  } catch {
+    // 忽略:读取失败维持当前展示。
+  }
+}
+
+async function removeDataset(m: SavedDatasetMeta) {
+  try {
+    await deleteDataset(m.id)
+  } catch {
+    return
+  }
+  await refreshHistory()
+  // 删的是正在展示的这条 → 回退到最近一个,没有则清空回种子。
+  if (m.id === ds.currentId) {
+    const top = history.value[0]
+    if (top) {
+      try {
+        await loadInto(top)
+      } catch {
+        ds.clear()
+      }
+    } else {
+      ds.clear()
+    }
+  }
+}
+
 // 本会话未跑引擎时,从本地库恢复最近一次采集结果(跨重启留存)。
 // 每个 await 后复查 active/cancelled:防止恢复读取期间发生了新一轮采集时,
 // 这个在途的旧恢复结果回来后覆盖掉刚抓到的新数据。
 onMounted(async () => {
-  if (ds.active || !storageAvailable) return
+  if (!storageAvailable) return
   try {
     const metas = await listDatasets()
-    if (cancelled || ds.active) return
+    if (cancelled) return
+    history.value = metas
+    if (ds.active) return
     const top = metas[0]
     if (!top) return
     const blob = await loadDataset(top.id)
     if (cancelled || ds.active) return
-    if (blob) ds.setResult(blob.columns, blob.rows, top.source || top.name, [])
+    if (blob) {
+      ds.setResult(blob.columns, blob.rows, top.source || top.name, [])
+      ds.setCurrentId(top.id)
+    }
   } catch {
     // 忽略:无库 / 读取失败时维持种子演示。
   }
@@ -154,6 +231,50 @@ onMounted(async () => {
           <span class="mono fv">{{ fieldsLabel }}</span>
         </span>
         <div class="sr-right">
+          <DropdownMenuRoot v-if="storageAvailable" v-model:open="histOpen">
+            <DropdownMenuTrigger as-child>
+              <div class="hist-dd">
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="#9a9aa6"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M8 4.2V8l2.4 1.4" />
+                  <path d="M2.6 8a5.4 5.4 0 1 0 1.3-3.5M2.6 4.5V7h2.5" />
+                </svg>
+                <span class="ed-label">历史</span>
+                <span v-if="history.length" class="hist-count">{{ history.length }}</span>
+              </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent class="dp-hist" align="end" :side-offset="6" @open-auto-focus.prevent>
+                <div v-if="!history.length" class="dh-empty">暂无历史数据集</div>
+                <div v-for="m in history" :key="m.id" class="dh-row" :class="{ current: m.id === ds.currentId }">
+                  <button type="button" class="dh-main" @click="switchTo(m)">
+                    <span class="dh-name">{{ m.name }}</span>
+                    <span class="dh-meta">{{ m.rowCount }} 条 · {{ relTime(m.createdAt) }}</span>
+                  </button>
+                  <button type="button" class="dh-del" title="删除" @click="removeDataset(m)">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round">
+                      <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8" />
+                    </svg>
+                  </button>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
           <DropdownMenuRoot>
             <DropdownMenuTrigger as-child>
               <div class="export-dd">
@@ -441,6 +562,35 @@ onMounted(async () => {
 .ed-label {
   color: #7a7a87;
 }
+.hist-dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 12px;
+  color: #cdccd8;
+  cursor: pointer;
+}
+.hist-dd:hover {
+  border-color: #33333f;
+}
+.hist-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(124, 92, 252, 0.18);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+}
 .btn-dl {
   display: flex;
   align-items: center;
@@ -677,5 +827,88 @@ onMounted(async () => {
 }
 .dp-menu-item.active {
   color: var(--accent-text);
+}
+
+/* 历史数据集下拉(同样 portal 到 body 外,dh- 前缀) */
+.dp-hist {
+  min-width: 248px;
+  max-width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.dp-hist:focus {
+  outline: none;
+}
+.dh-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: #7a7a87;
+  text-align: center;
+}
+.dh-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+}
+.dh-row:hover {
+  background: rgba(124, 92, 252, 0.1);
+}
+.dh-row.current {
+  background: rgba(124, 92, 252, 0.16);
+}
+.dh-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.dh-name {
+  font-size: 12.5px;
+  color: #e6e5ee;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dh-row.current .dh-name {
+  color: var(--accent-text);
+}
+.dh-meta {
+  font-size: 10.5px;
+  color: #7a7a87;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dh-del {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  border-radius: 6px;
+  background: none;
+  border: none;
+  color: #6a6a76;
+  cursor: pointer;
+}
+.dh-del:hover {
+  background: rgba(224, 68, 62, 0.14);
+  color: #e0443e;
 }
 </style>
