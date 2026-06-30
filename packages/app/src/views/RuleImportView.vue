@@ -180,10 +180,10 @@ onBeforeUnmount(() => {
         <span class="head-sub">Sift 已自动识别规则类型、解码内容、还原采集链路</span>
       </div>
       <div class="head-actions">
-        <button type="button" class="btn-soft" @click="router.push('/import/paste')">‹ 返回粘贴</button>
-        <button type="button" class="btn-soft" @click="showFlash('reparse')">
+        <button type="button" class="btn-soft tall" @click="showFlash('reparse')">
           {{ flash === 'reparse' ? '✓ 已重新解析' : '重新解析' }}
         </button>
+        <button type="button" class="btn-primary" @click="router.push('/import/paste')">粘贴书源 · 搜索预览 →</button>
       </div>
     </header>
 
