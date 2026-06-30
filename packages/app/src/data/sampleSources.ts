@@ -34,6 +34,7 @@ export const SAMPLE_SOURCES: Record<'qimao' | 'jgb', Record<string, unknown>> = 
     source_url: 'http://www.jiugangbi.com/',
     time_out: 6000,
     book_name: '.currentnovelyfw .catalogyfw_info .novelname_author .novelname',
+    book_remark: '.currentnovelyfw .catalogyfw_info .catalognovel_intro',
     book_author: '.currentnovelyfw .catalogyfw_info .novelname_author .novelauthor a',
     book_cover: '.currentnovelyfw .catalogyfw_pic img',
     book_menu: '.indexyfw_listbox .listchapter ul li:gt(8) a',
@@ -53,11 +54,15 @@ export const SAMPLE_SOURCES: Record<'qimao' | 'jgb', Record<string, unknown>> = 
     search_result: {
       limit: '6',
       list: '.toplist_list .list_ul li,.indexyfw_novel',
-      name: '.currentnovelyfw .catalogyfw_info .novelname_author .novelname',
+      name: "p.p1 a[href^='http://www.jiugangbi.com/'],.currentnovelyfw .catalogyfw_info .novelname_author .novelname",
       author: 'p.p3,.currentnovelyfw .catalogyfw_info .novelname_author .novelauthor a',
+      newest: 'p.p2 a,.currentnovelyfw .catalogyfw_info .catalognovel_newest a',
+      remark: 'p.p6,.currentnovelyfw .catalogyfw_info .catalognovel_intro',
+      cover: '.currentnovelyfw .catalogyfw_pic img',
       cover_attr: 'src',
       url_type: '2',
       url_replace_rules: ['http://m%%http://www'],
+      url: "p.p1 a[href^='http://www.jiugangbi.com/'],.currentlocationyfw .fr a",
       url_attr: 'href'
     }
   }

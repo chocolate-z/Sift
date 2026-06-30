@@ -58,16 +58,14 @@ async function runCompiled(rule: Rule) {
   running.value = true
   try {
     const out = await runRule(rule, { [param]: keyword.value })
-    if (!out.records.length) {
-      const tail = out.warnings.slice(0, 2).join(' / ')
-      runNotice.value = `未解析到数据(0 条)。${tail || '检查关键词、选择器或站点是否可达'}`
-      return
-    }
     // 引擎 RunOutput.records 以列显示名为键(assemble_output 用 col.name),故 field 取 name。
     const cols = rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type }))
+    // 即便 0 条也写入(active=true):数据预览据此显示「本次未抓到数据」空态,
+    // 避免恢复逻辑把上一次的旧结果当成本次结果。仅非空才落库。
     dataset.setResult(cols, out.records, rule.meta.name, out.warnings)
-    // 落库留存(best-effort,失败不影响预览)。
-    saveDataset(rule.meta.name, rule.meta.name, cols, out.records).catch(() => {})
+    if (out.records.length) {
+      saveDataset(rule.meta.name, rule.meta.name, cols, out.records).catch(() => {})
+    }
     router.push('/data')
   } catch (e) {
     // Tauri 命令以 Err(String) 拒绝,catch 到的是字符串而非 Error。

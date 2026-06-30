@@ -226,6 +226,10 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
   }
 
   // ---- 步骤 2:目录(章节列表)----
+  // 能否构建目录:模板式目录 URL(七猫 ?book_id=)或已抽出 book_url(旧钢笔)。
+  // 否则(网页源缺 search_result.url,无从得知书籍详情链接)优雅降级为「仅搜索」,
+  // 避免发出永远填不上的 ###book_url### 导致整轮失败。
+  const canBuildCatalog = catalogUrlIsTemplate || !!searchFields.book_url
   const catalogEngine = isJsonPathExpr(raw.book_menu ?? '') ? 'jsonpath' : searchEngine
   const catalogUrl: UrlSource = catalogUrlIsTemplate
     ? {
@@ -297,19 +301,18 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
     fanout: { kind: 'perItem', overStep: 'search' }
   }
 
-  // 输出:书名(搜索,下沉) + 章节 + (链接/章节ID)
+  // 输出:书名(搜索,下沉) + 章节 +(链接/章节ID);仅搜索降级时只输出书单列。
   const columns: OutputColumn[] = []
   if (searchFields.name) columns.push({ name: '书名', fromField: 'name', fromStep: 'search', type: 'string' })
   if (searchFields.author) columns.push({ name: '作者', fromField: 'author', fromStep: 'search', type: 'string' })
-  if (catalogFields.chapter_name)
+  if (canBuildCatalog && catalogFields.chapter_name)
     columns.push({ name: '章节', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
-  if (thirdCol) columns.push(thirdCol)
+  if (canBuildCatalog && thirdCol) columns.push(thirdCol)
 
-  const navVar = catalogUrlIsTemplate ? 'book_id' : 'book_url'
-  const vars: VarDecl[] = [
-    { name: keywordParam, origin: 'input', required: true },
-    { name: navVar, origin: 'produced', producedBy: 'search' }
-  ]
+  const vars: VarDecl[] = [{ name: keywordParam, origin: 'input', required: true }]
+  if (canBuildCatalog) {
+    vars.push({ name: catalogUrlIsTemplate ? 'book_id' : 'book_url', origin: 'produced', producedBy: 'search' })
+  }
 
   const meta: RuleMeta = {
     id: raw.source_url ?? raw.source_name ?? 'book-source',
@@ -327,7 +330,7 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
     meta,
     entry,
     vars,
-    steps: [searchStep, catalogStep],
+    steps: canBuildCatalog ? [searchStep, catalogStep] : [searchStep],
     output: { format: 'records', columns, formats: ['csv', 'json'] }
   }
 }

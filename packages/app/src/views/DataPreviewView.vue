@@ -93,18 +93,24 @@ function doExport(format: string) {
     flashExport(`导出失败:${e instanceof Error ? e.message : String(e)}`)
   }
 }
+let cancelled = false
 onBeforeUnmount(() => {
+  cancelled = true
   if (exportTimer) clearTimeout(exportTimer)
 })
 
 // 本会话未跑引擎时,从本地库恢复最近一次采集结果(跨重启留存)。
+// 每个 await 后复查 active/cancelled:防止恢复读取期间发生了新一轮采集时,
+// 这个在途的旧恢复结果回来后覆盖掉刚抓到的新数据。
 onMounted(async () => {
   if (ds.active || !storageAvailable) return
   try {
     const metas = await listDatasets()
+    if (cancelled || ds.active) return
     const top = metas[0]
     if (!top) return
     const blob = await loadDataset(top.id)
+    if (cancelled || ds.active) return
     if (blob) ds.setResult(blob.columns, blob.rows, top.source || top.name, [])
   } catch {
     // 忽略:无库 / 读取失败时维持种子演示。

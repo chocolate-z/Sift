@@ -174,3 +174,21 @@ describe('compileCatalogRule — 旧钢笔 (extracted-url + self-extract 链路)
     expect((parse.fields.chapter_url!.selector.pipeline ?? []).map((p) => p.op)).toEqual(['resolveUrl'])
   })
 })
+
+describe('compileCatalogRule — 网页源缺 search_result.url 优雅降级', () => {
+  it('falls back to a search-only rule with no unresolvable ###book_url###', () => {
+    const noUrl = JSON.parse(JSON.stringify(jiugangbi))
+    delete noUrl.search_result.url
+    delete noUrl.search_result.url_attr
+    const rule = compileCatalogRule(noUrl)
+    // 无法得到 book_url → 只保留搜索步骤,不发会失败的目录步骤
+    expect(rule.steps.map((s) => s.id)).toEqual(['search'])
+    const hasBookUrlTemplate = rule.steps.some(
+      (s) => s.request.url.kind === 'template' && s.request.url.template.includes('###book_url###')
+    )
+    expect(hasBookUrlTemplate).toBe(false)
+    // 仍输出书单列
+    expect(rule.output.columns.some((c) => c.name === '书名')).toBe(true)
+    expect(rule.output.columns.some((c) => c.name === '章节')).toBe(false)
+  })
+})
