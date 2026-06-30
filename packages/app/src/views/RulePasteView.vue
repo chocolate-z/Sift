@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { compileSearchRule, parseBookSource, type ParseResult } from '@sift/source-parser'
+import { compileCatalogRule, compileSearchRule, parseBookSource, type ParseResult } from '@sift/source-parser'
+import type { Rule } from '@sift/core-ir'
 import { SAMPLE_SOURCES } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
 import { useDatasetStore } from '@/stores/dataset'
@@ -45,14 +46,12 @@ function loadSample(key: 'qimao' | 'jgb') {
   parse()
 }
 
-async function runSearch() {
-  if (!rawObj.value) return
+async function runCompiled(rule: Rule) {
   runError.value = null
   runNotice.value = null
-  const rule = compileSearchRule(rawObj.value as Parameters<typeof compileSearchRule>[0])
   const param = rule.entry.kind === 'keyword' ? rule.entry.param : 'keyword'
   if (!isTauri) {
-    runNotice.value = '搜索预览仅在桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
+    runNotice.value = '真实运行仅在桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
     return
   }
   running.value = true
@@ -70,6 +69,14 @@ async function runSearch() {
   } finally {
     running.value = false
   }
+}
+function runSearch() {
+  if (!rawObj.value) return
+  runCompiled(compileSearchRule(rawObj.value as Parameters<typeof compileSearchRule>[0]))
+}
+function runCatalog() {
+  if (!rawObj.value) return
+  runCompiled(compileCatalogRule(rawObj.value as Parameters<typeof compileCatalogRule>[0]))
 }
 const statusMeta: Record<string, { label: string; cls: string }> = {
   ok: { label: '解析成功', cls: 'ok' },
@@ -133,7 +140,9 @@ onMounted(parse)
               <button type="button" class="btn-run" :disabled="running" @click="runSearch">
                 {{ running ? '运行中…' : '搜索预览' }}
               </button>
+              <button type="button" class="btn-run alt" :disabled="running" @click="runCatalog">采集目录</button>
             </div>
+            <div class="run-hint">搜索预览 = 结果书单;采集目录 = 每本书的章节列表(2 步链路,请求略多)</div>
             <div v-if="runError" class="run-msg err">✕ {{ runError }}</div>
             <div v-else-if="runNotice" class="run-msg notice">{{ runNotice }}</div>
           </div>
@@ -429,10 +438,26 @@ onMounted(parse)
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
 }
+.btn-run.alt {
+  background: var(--bg-elevated);
+  border: 1px solid #34344a;
+  color: #cdccd8;
+  box-shadow: none;
+}
+.btn-run.alt:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
 .btn-run:disabled {
   opacity: 0.55;
   cursor: not-allowed;
   box-shadow: none;
+}
+.run-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #7a7a87;
+  line-height: 1.5;
 }
 .run-msg {
   margin-top: 9px;
