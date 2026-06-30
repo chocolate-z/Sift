@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isRule } from '@sift/core-ir'
-import { compileSearchRule } from '../src/compile'
+import { compileCatalogRule, compileSearchRule } from '../src/compile'
 import { jiugangbi, qimao } from './fixtures'
 
 describe('compileSearchRule — 七猫 (API/JSON)', () => {
@@ -89,5 +89,88 @@ describe('compileSearchRule — 旧钢笔 (web/CSS)', () => {
 
   it('keyword param taken from the search URL placeholder', () => {
     expect(rule.entry).toMatchObject({ kind: 'keyword', param: 'keyword' })
+  })
+})
+
+describe('compileCatalogRule — 七猫 (template-id 链路)', () => {
+  const rule = compileCatalogRule(qimao)
+
+  it('is a valid 2-step Rule (search → catalog)', () => {
+    expect(isRule(rule)).toBe(true)
+    expect(rule.steps.map((s) => s.id)).toEqual(['search', 'catalog'])
+  })
+
+  it('search step extracts book_id for the catalog URL template', () => {
+    const f = rule.steps[0]!.parse.fields.book_id
+    expect(f).toBeTruthy()
+    expect(f!.selector.engine).toBe('jsonpath')
+    expect(f!.selector.expr).toBe('book_id')
+  })
+
+  it('catalog URL is the chapter-list template threaded by book_id', () => {
+    const catalog = rule.steps[1]!
+    expect(catalog.fanout).toEqual({ kind: 'perItem', overStep: 'search' })
+    const url = catalog.request.url
+    expect(url.kind).toBe('template')
+    if (url.kind === 'template') {
+      expect(url.template).toBe('https://www.qimao.com/qimaoapi/api/book/chapter-list?book_id=###book_id###')
+      expect(url.placeholders).toEqual([{ name: 'book_id', satisfiedBy: { kind: 'step', stepId: 'search' } }])
+    }
+  })
+
+  it('catalog parses the JSON chapter list (item_name/item_id)', () => {
+    const parse = rule.steps[1]!.parse
+    expect(parse.list!.container.engine).toBe('jsonpath')
+    expect(parse.list!.container.expr).toBe('data.chapters')
+    expect(parse.fields.chapter_name!.selector.expr).toBe('title')
+    expect(parse.fields.chapter_id!.selector.expr).toBe('id')
+  })
+
+  it('output columns: 书名 + 章节 + 章节ID', () => {
+    const names = rule.output.columns.map((c) => c.name)
+    expect(names).toContain('书名')
+    expect(names).toContain('章节')
+    expect(names).toContain('章节ID')
+  })
+})
+
+describe('compileCatalogRule — 旧钢笔 (extracted-url + self-extract 链路)', () => {
+  const rule = compileCatalogRule(jiugangbi)
+
+  it('search step extracts book_url with url_replace + resolveUrl pipeline', () => {
+    const f = rule.steps[0]!.parse.fields.book_url
+    expect(f).toBeTruthy()
+    expect(f!.selector.engine).toBe('css')
+    expect(f!.selector.extract).toEqual({ mode: 'attr', name: 'href' })
+    const ops = (f!.selector.pipeline ?? []).map((p) => p.op)
+    expect(ops).toEqual(['urlReplace', 'resolveUrl'])
+    // 无 book_id(网页源走 url 抽取)
+    expect(rule.steps[0]!.parse.fields.book_id).toBeUndefined()
+  })
+
+  it('site directives (gb2312) apply to both steps', () => {
+    expect(rule.steps[0]!.request.encoding).toBe('gb2312')
+    expect(rule.steps[1]!.request.encoding).toBe('gb2312')
+    expect(rule.steps[0]!.request.followRedirect).toBe(true)
+  })
+
+  it('catalog URL is the extracted book_url template', () => {
+    const url = rule.steps[1]!.request.url
+    expect(url.kind).toBe('template')
+    if (url.kind === 'template') {
+      expect(url.template).toBe('###book_url###')
+      expect(url.placeholders).toEqual([{ name: 'book_url', satisfiedBy: { kind: 'step', stepId: 'search' } }])
+    }
+  })
+
+  it('catalog uses book_menu container + self-extract chapter fields', () => {
+    const parse = rule.steps[1]!.parse
+    expect(parse.list!.container.engine).toBe('css')
+    expect(parse.list!.container.expr).toBe('.indexyfw_listbox .listchapter ul li:gt(8) a')
+    // 空选择器 = 取列表项(<a>)自身
+    expect(parse.fields.chapter_name!.selector.expr).toBe('')
+    expect(parse.fields.chapter_url!.selector.expr).toBe('')
+    expect(parse.fields.chapter_url!.selector.extract).toEqual({ mode: 'attr', name: 'href' })
+    expect((parse.fields.chapter_url!.selector.pipeline ?? []).map((p) => p.op)).toEqual(['resolveUrl'])
   })
 })
