@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use url::Url;
 
-use crate::error::{EngineError, EngineResult};
+use crate::error::EngineResult;
 use crate::exec::{lower_request, Credentials, RequestConfig, VarScope};
 use crate::parse::{parse_document, select_first, Extraction, Record, SelectorExpr};
 use crate::request::{FetchRequest, HttpClient};
@@ -225,7 +225,7 @@ async fn paginate_param(
     let mut pages: Vec<Vec<Record>> = Vec::new();
     let mut page = start;
     for _ in 0..max_pages {
-        let url = set_query_param(&base.url, param, &page.to_string())?;
+        let url = set_query_param(&base.url, param, &page.to_string());
         let mut req = base.clone();
         req.url = url;
         let resp = client.fetch(&req).await?;
@@ -260,8 +260,13 @@ async fn paginate_next(
 ) -> EngineResult<(Vec<Record>, Vec<String>)> {
     let mut warnings = Vec::new();
     let mut pages: Vec<Vec<Record>> = Vec::new();
+    // 已抓 URL 集合:防止末页「下一页」指回自身/旧页时无限循环重复抓取。
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut req = base.clone();
     for _ in 0..max_pages {
+        if !visited.insert(req.url.clone()) {
+            break; // 该 URL 已抓过 → 到底
+        }
         let resp = client.fetch(&req).await?;
         let final_url = resp.final_url.clone();
         let parsed = parse_document(&resp.body, parse, Some(&final_url))?;
@@ -273,12 +278,12 @@ async fn paginate_next(
         );
         pages.push(parsed.records);
         match next_link(&resp.body, next_sel, &final_url, stop_text) {
-            Some(url) => {
+            Some(url) if !visited.contains(&url) => {
                 let mut next_req = base.clone();
                 next_req.url = url;
                 req = next_req;
             }
-            None => break,
+            _ => break, // 无下一页 / 指回已抓页 → 到底
         }
     }
     Ok((combine_pages(pages, combine), warnings))
@@ -350,24 +355,40 @@ fn combine_pages(pages: Vec<Vec<Record>>, combine: Option<PageCombine>) -> Vec<R
     }
 }
 
-/// 设置/替换 URL 的查询参数。
-fn set_query_param(url_str: &str, key: &str, val: &str) -> EngineResult<String> {
-    let mut url = Url::parse(url_str)
-        .map_err(|e| EngineError::InvalidRequest(format!("URL 解析失败: {e}")))?;
-    let existing: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(k, _)| k != key)
-        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-        .collect();
-    {
-        let mut qp = url.query_pairs_mut();
-        qp.clear();
-        for (k, v) in &existing {
-            qp.append_pair(k, v);
+/// 设置/替换 URL 的查询参数。**纯文本替换**(不经 Url::parse 重建),以保留查询里的
+/// 字面非 ASCII(如 gb2312 源的关键词),让请求层 fetch 的 charset 编码仍能正确生效;
+/// 若先经 url 库重建,字面关键词会被 UTF-8 百分号编码,charset 编码便无从下手(bug)。
+fn set_query_param(url_str: &str, key: &str, val: &str) -> String {
+    let (head, rest) = match url_str.split_once('?') {
+        Some((h, r)) => (h, r),
+        None => return format!("{url_str}?{key}={val}"),
+    };
+    let (query, frag) = match rest.split_once('#') {
+        Some((q, f)) => (q, Some(f)),
+        None => (rest, None),
+    };
+    let mut parts: Vec<String> = Vec::new();
+    let mut found = false;
+    for seg in query.split('&') {
+        if seg.is_empty() {
+            continue;
         }
-        qp.append_pair(key, val);
+        if seg.split('=').next() == Some(key) {
+            parts.push(format!("{key}={val}"));
+            found = true;
+        } else {
+            parts.push(seg.to_string());
+        }
     }
-    Ok(url.to_string())
+    if !found {
+        parts.push(format!("{key}={val}"));
+    }
+    let mut out = format!("{head}?{}", parts.join("&"));
+    if let Some(f) = frag {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
 }
 
 /// 把记录的非空字段按键绑入作用域(供下游 ###field### 解析)。
@@ -531,12 +552,29 @@ mod tests {
 
     #[test]
     fn set_query_param_adds_and_replaces() {
-        let added = set_query_param("http://x.com/list?kw=a", "page", "2").unwrap();
+        let added = set_query_param("http://x.com/list?kw=a", "page", "2");
         assert!(added.contains("kw=a"));
         assert!(added.contains("page=2"));
-        let replaced = set_query_param("http://x.com/list?page=1&kw=a", "page", "3").unwrap();
+        let replaced = set_query_param("http://x.com/list?page=1&kw=a", "page", "3");
         assert!(replaced.contains("page=3"));
         assert!(!replaced.contains("page=1"));
+    }
+
+    #[test]
+    fn set_query_param_preserves_literal_non_ascii() {
+        // gb2312 源:字面关键词必须原样保留,交给 fetch 的 charset 编码处理(不被 UTF-8 化)。
+        let out = set_query_param("http://x.com/s?searchkey=剑来&an=搜索", "page", "2");
+        assert!(out.contains("searchkey=剑来"), "out: {out}");
+        assert!(out.contains("an=搜索"));
+        assert!(out.contains("page=2"));
+    }
+
+    #[test]
+    fn set_query_param_no_query_appends() {
+        assert_eq!(
+            set_query_param("http://x.com/list", "page", "2"),
+            "http://x.com/list?page=2"
+        );
     }
 
     #[test]

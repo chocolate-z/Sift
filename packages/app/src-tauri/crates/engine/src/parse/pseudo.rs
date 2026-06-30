@@ -86,9 +86,11 @@ pub fn translate_pseudo(selector: &str) -> Translated {
 
 /// 对元素数组应用位置算子 —— 与 DOM 库无关的可验证核心。
 pub fn apply_positional<T: Clone>(items: &[T], op: &PositionalOp) -> Vec<T> {
+    // 负索引按 jQuery 语义从末尾计(:gt(-2)/:lt(-1) 用于裁掉尾部导航行)。
+    let from_end = |n: i64| if n < 0 { items.len() as i64 + n } else { n };
     match *op {
         PositionalOp::Gt(n) => {
-            let start = (n + 1).max(0) as usize;
+            let start = (from_end(n) + 1).max(0) as usize;
             if start >= items.len() {
                 Vec::new()
             } else {
@@ -96,11 +98,11 @@ pub fn apply_positional<T: Clone>(items: &[T], op: &PositionalOp) -> Vec<T> {
             }
         }
         PositionalOp::Lt(n) => {
-            let end = (n.max(0) as usize).min(items.len());
+            let end = (from_end(n).max(0) as usize).min(items.len());
             items[..end].to_vec()
         }
         PositionalOp::Eq(n) => {
-            let idx = if n < 0 { items.len() as i64 + n } else { n };
+            let idx = from_end(n);
             if idx < 0 {
                 Vec::new()
             } else {
@@ -174,6 +176,18 @@ mod tests {
         let items: Vec<i32> = (0..15).collect();
         let got = apply_positional(&items, &PositionalOp::Lt(3));
         assert_eq!(got, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn negative_gt_lt_count_from_end() {
+        let items: Vec<i32> = (0..5).collect(); // 0,1,2,3,4
+                                                // :gt(-2) → 倒数第 2 之后 = 最后一个
+        assert_eq!(apply_positional(&items, &PositionalOp::Gt(-2)), vec![4]);
+        // :lt(-1) → 除最后一个外全部
+        assert_eq!(
+            apply_positional(&items, &PositionalOp::Lt(-1)),
+            vec![0, 1, 2, 3]
+        );
     }
 
     #[test]

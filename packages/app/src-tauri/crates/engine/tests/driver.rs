@@ -120,17 +120,17 @@ async fn runs_two_step_chain_with_fanout_and_var_threading() {
 }
 
 #[tokio::test]
-async fn missing_keyword_warns_but_runs() {
+async fn missing_keyword_errors_clearly() {
     let server = MockServer::start().await;
     mount_mocks(&server).await;
     let rule: Rule = serde_json::from_str(&rule_json(&server.uri())).unwrap();
     let client = HttpClient::unlimited().unwrap();
 
-    // 不提供 kw:入口告警,###kw### 原样留在 URL(mock 仍按 path 匹配)。
-    let out = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
+    // 不提供 kw:搜索 URL 的 ###kw### 无法解析,run_rule 明确报错(而非带着字面占位符乱跑)。
+    let err = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
         .await
-        .unwrap();
-    assert!(out.warnings.iter().any(|w| w.contains("关键词")));
+        .unwrap_err();
+    assert!(err.to_string().contains("kw"), "{err}");
 }
 
 #[tokio::test]

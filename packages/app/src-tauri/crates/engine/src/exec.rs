@@ -73,6 +73,15 @@ pub fn substitute(template: &str, scope: &VarScope) -> String {
     .into_owned()
 }
 
+/// 取字符串里第一个残留的 ###name### 占位符名(若有)。
+fn residual_placeholder(s: &str) -> Option<String> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"###([A-Za-z0-9_]+)###").unwrap());
+    re.captures(s).map(|c| c[1].to_string())
+}
+
 fn substitute_body(body: &RequestBody, scope: &VarScope) -> RequestBody {
     match body {
         RequestBody::Form { fields } => RequestBody::Form {
@@ -109,6 +118,12 @@ pub fn lower_request(
             ))
         }
     };
+    // 残留 ###name### = 该变量未由上游步骤产出,直接明确报错而非交给 fetch 得到模糊网络错。
+    if let Some(name) = residual_placeholder(&url) {
+        return Err(EngineError::InvalidRequest(format!(
+            "占位符 ###{name}### 未解析(变量未提供或未由上游步骤产出),URL 无法构造"
+        )));
+    }
 
     // 头:defaults 先铺底,cfg 覆盖;值做占位符替换。
     let mut headers = BTreeMap::new();
@@ -285,6 +300,17 @@ mod tests {
             Some("override")
         );
         assert_eq!(req.timeout_ms, 5000);
+    }
+
+    #[test]
+    fn unresolved_placeholder_errors_clearly() {
+        // book_url 未提供 → 明确报「占位符未产出」,而非交给 fetch 得模糊错。
+        let cfg = template_cfg("http://x.com/book?u=###book_url###");
+        let err = lower_request(&cfg, &scope(&[]), None, &Credentials::new()).unwrap_err();
+        match err {
+            EngineError::InvalidRequest(m) => assert!(m.contains("book_url"), "{m}"),
+            other => panic!("expected InvalidRequest, got {other:?}"),
+        }
     }
 
     #[test]
