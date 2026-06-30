@@ -164,8 +164,12 @@ pub enum Pagination {
     None,
     NextButton {
         next: SelectorExpr,
+        /// 下一页元素文本含此串 ⇒ 已到底,停止。
         #[serde(default)]
         stop_text: Option<String>,
+        /// 仅当下一页元素文本含此串才继续翻(line-B next_val);否则视为到底。
+        #[serde(default)]
+        require_text: Option<String>,
         #[serde(default)]
         max_pages: Option<u32>,
         #[serde(default)]

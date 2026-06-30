@@ -164,6 +164,7 @@ async fn run_execution(
         Some(Pagination::NextButton {
             next,
             stop_text,
+            require_text,
             max_pages,
             combine,
         }) => {
@@ -174,6 +175,7 @@ async fn run_execution(
                 &step.id,
                 next,
                 stop_text.as_deref(),
+                require_text.as_deref(),
                 max_pages.unwrap_or(DEFAULT_MAX_PAGES),
                 *combine,
             )
@@ -255,6 +257,7 @@ async fn paginate_next(
     step_id: &str,
     next_sel: &SelectorExpr,
     stop_text: Option<&str>,
+    require_text: Option<&str>,
     max_pages: u32,
     combine: Option<PageCombine>,
 ) -> EngineResult<(Vec<Record>, Vec<String>)> {
@@ -277,7 +280,7 @@ async fn paginate_next(
                 .map(|w| format!("[{step_id}] {w}")),
         );
         pages.push(parsed.records);
-        match next_link(&resp.body, next_sel, &final_url, stop_text) {
+        match next_link(&resp.body, next_sel, &final_url, stop_text, require_text) {
             Some(url) if !visited.contains(&url) => {
                 let mut next_req = base.clone();
                 next_req.url = url;
@@ -289,20 +292,30 @@ async fn paginate_next(
     Ok((combine_pages(pages, combine), warnings))
 }
 
-/// 从页面解析下一页链接;stopText 命中(next 元素文本含之)则视为到底,返回 None。
+/// 从页面解析下一页链接。两类文本门控(任一不满足即视为到底返回 None):
+/// `stop_text` 命中(next 元素文本含之)则停;`require_text` 设置但 next 元素文本**不含**之则停
+/// (line-B next_val:正常页按钮文本为「下一页」才继续,末页文本变化即止)。
 fn next_link(
     html: &str,
     next_sel: &SelectorExpr,
     base_url: &str,
     stop_text: Option<&str>,
+    require_text: Option<&str>,
 ) -> Option<String> {
-    if let Some(stop) = stop_text {
+    if stop_text.is_some() || require_text.is_some() {
         let mut text_sel = next_sel.clone();
         text_sel.extract = Extraction::Text;
         text_sel.pipeline = Vec::new();
         let text = select_first(html, &text_sel, None).unwrap_or_default();
-        if text.contains(stop) {
-            return None;
+        if let Some(stop) = stop_text {
+            if text.contains(stop) {
+                return None;
+            }
+        }
+        if let Some(req) = require_text {
+            if !text.contains(req) {
+                return None;
+            }
         }
     }
     let href = select_first(html, next_sel, Some(base_url))?;

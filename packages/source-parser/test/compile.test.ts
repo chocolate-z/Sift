@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isRule } from '@sift/core-ir'
-import { compileCatalogRule, compileSearchRule } from '../src/compile'
-import { jiugangbi, qimao } from './fixtures'
+import { compileBookSource, compileCatalogRule, compileSearchRule } from '../src/compile'
+import { jiugangbi, partialWarn, qimao } from './fixtures'
 
 describe('compileSearchRule — 七猫 (API/JSON)', () => {
   const rule = compileSearchRule(qimao)
@@ -190,5 +190,111 @@ describe('compileCatalogRule — 网页源缺 search_result.url 优雅降级', (
     // 仍输出书单列
     expect(rule.output.columns.some((c) => c.name === '书名')).toBe(true)
     expect(rule.output.columns.some((c) => c.name === '章节')).toBe(false)
+  })
+})
+
+describe('compileBookSource — 七猫 (template-id 正文链路)', () => {
+  const rule = compileBookSource(qimao)
+
+  it('is a valid 3-step Rule (search → catalog → chapter)', () => {
+    expect(isRule(rule)).toBe(true)
+    expect(rule.steps.map((s) => s.id)).toEqual(['search', 'catalog', 'chapter'])
+  })
+
+  it('chapter step fanouts over catalog with item_url template (item_id→chapter_id)', () => {
+    const chapter = rule.steps[2]!
+    expect(chapter.fanout).toEqual({ kind: 'perItem', overStep: 'catalog' })
+    const url = chapter.request.url
+    expect(url.kind).toBe('template')
+    if (url.kind === 'template') {
+      expect(url.template).toBe('https://www.qimao.com/shuku/###book_id###-###chapter_id###/')
+      expect(url.placeholders.map((p) => p.name)).toEqual(['book_id', 'chapter_id'])
+    }
+  })
+
+  it('chapter parse is a page with chapter_content; 七猫 has no chapter_title', () => {
+    const parse = rule.steps[2]!.parse
+    expect(parse.shape).toBe('page')
+    expect(parse.fields.chapter_content!.selector.expr).toBe('body')
+    expect(parse.fields.chapter_title).toBeUndefined()
+    // 七猫 content_filter 为空 → 无清洗管线
+    expect(parse.fields.chapter_content!.selector.pipeline).toBeUndefined()
+  })
+
+  it('caps the catalog to a small chapter count for preview', () => {
+    expect(rule.steps[1]!.parse.limit).toBe(3)
+  })
+
+  it('output adds 正文 column, no pagination (single-page chapter)', () => {
+    expect(rule.output.columns.some((c) => c.name === '正文')).toBe(true)
+    expect(rule.steps[2]!.pagination).toBeUndefined()
+  })
+})
+
+describe('compileBookSource — 旧钢笔 (extracted-url 正文链路 + content_filter + 正文翻页)', () => {
+  const rule = compileBookSource(jiugangbi)
+
+  it('is a 3-step rule; chapter URL is the extracted chapter_url', () => {
+    expect(rule.steps.map((s) => s.id)).toEqual(['search', 'catalog', 'chapter'])
+    const url = rule.steps[2]!.request.url
+    expect(url.kind).toBe('template')
+    if (url.kind === 'template') {
+      expect(url.template).toBe('###chapter_url###')
+      expect(url.placeholders).toEqual([{ name: 'chapter_url', satisfiedBy: { kind: 'step', stepId: 'catalog' } }])
+    }
+  })
+
+  it('chapter has title + content; site directives (gb2312/302) carried to chapter', () => {
+    const chapter = rule.steps[2]!
+    const parse = chapter.parse
+    expect(parse.fields.chapter_title!.selector.expr).toBe('.currentlocationyfw > p:eq(6) a')
+    expect(parse.fields.chapter_content!.selector.expr).toBe('.chapter_content > a:eq(1)')
+    expect(chapter.request.encoding).toBe('gb2312')
+    expect(chapter.request.followRedirect).toBe(true)
+  })
+
+  it('content_filter compiles to regex-clean pipeline ops (replace → empty)', () => {
+    const pipeline = rule.steps[2]!.parse.fields.chapter_content!.selector.pipeline ?? []
+    expect(pipeline).toHaveLength(3)
+    expect(pipeline.every((op) => op.op === 'regex')).toBe(true)
+    expect(pipeline.every((op) => (op as { replace?: string }).replace === '')).toBe(true)
+    // 解码后的正则之一含「本章未完」(广告行)
+    const patterns = pipeline.map((op) => (op as { pattern: string }).pattern)
+    expect(patterns.some((p) => p.includes('本章未完'))).toBe(true)
+  })
+
+  it('正文翻页 via nextButton + appendContent, capped + requireText (not stopText)', () => {
+    const pg = rule.steps[2]!.pagination
+    expect(pg?.kind).toBe('nextButton')
+    if (pg?.kind === 'nextButton') {
+      expect(pg.next.expr).toBe('.sytlet_footer_buttom ul li.buttom_next a')
+      expect(pg.next.extract).toEqual({ mode: 'attr', name: 'href' })
+      // next_val「下一页」= 继续翻的文本门控(requireText),不是 stopText(语义相反)。
+      expect(pg.requireText).toBe('下一页')
+      expect(pg.stopText).toBeUndefined()
+      expect(pg.combine).toBe('appendContent')
+      expect(pg.maxPages).toBe(8)
+    }
+  })
+
+  it('output columns: 书名 + 章节 + 章节标题 + 正文', () => {
+    expect(rule.output.columns.map((c) => c.name)).toEqual(['书名', '章节', '章节标题', '正文'])
+  })
+})
+
+describe('compileBookSource — 降级', () => {
+  it('no chapter_content → returns the catalog rule unchanged (no chapter step)', () => {
+    // partialWarn 有 search + 目录(book_id 模板)但无 chapter_content。
+    const rule = compileBookSource(partialWarn)
+    expect(rule.steps.map((s) => s.id)).toEqual(['search', 'catalog'])
+    expect(rule.steps.some((s) => s.id === 'chapter')).toBe(false)
+  })
+
+  it('search-only source (no catalog) → no chapter step', () => {
+    const noUrl = JSON.parse(JSON.stringify(jiugangbi))
+    delete noUrl.search_result.url
+    delete noUrl.search_result.url_attr
+    const rule = compileBookSource(noUrl)
+    expect(rule.steps.map((s) => s.id)).toEqual(['search'])
   })
 })

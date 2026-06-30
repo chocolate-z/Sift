@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { compileCatalogRule, compileSearchRule, parseBookSource, type ParseResult } from '@sift/source-parser'
+import {
+  compileBookSource,
+  compileCatalogRule,
+  compileSearchRule,
+  parseBookSource,
+  type ParseResult
+} from '@sift/source-parser'
 import type { Rule } from '@sift/core-ir'
 import { SAMPLE_SOURCES } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
@@ -86,6 +92,10 @@ function runCatalog() {
   if (!rawObj.value) return
   runCompiled(compileCatalogRule(rawObj.value as Parameters<typeof compileCatalogRule>[0]))
 }
+function runBook() {
+  if (!rawObj.value) return
+  runCompiled(compileBookSource(rawObj.value as Parameters<typeof compileBookSource>[0]))
+}
 const statusMeta: Record<string, { label: string; cls: string }> = {
   ok: { label: '解析成功', cls: 'ok' },
   warning: { label: '有警告', cls: 'warn' },
@@ -149,8 +159,11 @@ onMounted(parse)
                 {{ running ? '运行中…' : '搜索预览' }}
               </button>
               <button type="button" class="btn-run alt" :disabled="running" @click="runCatalog">采集目录</button>
+              <button type="button" class="btn-run alt" :disabled="running" @click="runBook">采集正文</button>
             </div>
-            <div class="run-hint">搜索预览 = 结果书单;采集目录 = 每本书的章节列表(2 步链路,请求略多)</div>
+            <div class="run-hint">
+              搜索预览 = 结果书单;采集目录 = 每本书的章节列表;采集正文 = 前几章正文(3 步链路,请求较多·已限速限章)
+            </div>
             <div v-if="runError" class="run-msg err">✕ {{ runError }}</div>
             <div v-else-if="runNotice" class="run-msg notice">{{ runNotice }}</div>
           </div>

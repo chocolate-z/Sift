@@ -329,3 +329,72 @@ async fn next_button_pagination_follows_links() {
     assert_eq!(out.records[0]["标题"].as_deref(), Some("A"));
     assert_eq!(out.records[2]["标题"].as_deref(), Some("C"));
 }
+
+#[tokio::test]
+async fn next_button_require_text_stops_when_text_changes() {
+    // 正文翻页 next_val:正常页「下一页」按钮文本为「下一页」才继续;末页按钮变「下一章」
+    // (指向下一章)→ requireText 不匹配即止,不把下一章正文误并进本章。
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body>
+                <div class="row"><span class="t">A</span></div>
+                <a class="next" href="/p2">下一页</a>
+            </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/p2"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body>
+                <div class="row"><span class="t">B</span></div>
+                <a class="next" href="/p3">下一章</a>
+            </body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/p3"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><body><div class="row"><span class="t">WRONG</span></div></body></html>"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let rule_json = format!(
+        r#"{{
+        "irVersion": 1,
+        "meta": {{ "id": "nb", "name": "翻页", "origin": "book-source", "sourceType": "web" }},
+        "entry": {{ "kind": "none" }},
+        "steps": [{{
+            "id": "pages", "name": "翻页",
+            "request": {{ "url": {{ "kind": "static", "url": "{base}/p1" }} }},
+            "parse": {{
+                "shape": "list",
+                "list": {{ "container": {{ "engine": "css", "expr": ".row" }} }},
+                "fields": {{ "title": {{ "selector": {{ "engine": "css", "expr": ".t" }} }} }}
+            }},
+            "pagination": {{
+                "kind": "nextButton",
+                "next": {{ "engine": "css", "expr": ".next", "extract": {{ "mode": "attr", "name": "href" }} }},
+                "requireText": "下一页",
+                "maxPages": 5
+            }}
+        }}],
+        "output": {{ "format": "records", "columns": [{{ "name": "标题", "fromField": "title", "fromStep": "pages" }}] }}
+    }}"#,
+        base = server.uri()
+    );
+    let rule: Rule = serde_json::from_str(&rule_json).unwrap();
+    let client = HttpClient::unlimited().unwrap();
+    let out = run_rule(&client, &rule, VarScope::new(), &BTreeMap::new())
+        .await
+        .unwrap();
+    // p1 文本「下一页」→ 跟随到 p2;p2 文本「下一章」≠ requireText → 止于 p2,不抓 p3。
+    assert_eq!(out.records.len(), 2, "warnings: {:?}", out.warnings);
+    assert_eq!(out.records[0]["标题"].as_deref(), Some("A"));
+    assert_eq!(out.records[1]["标题"].as_deref(), Some("B"));
+    assert!(out.records.iter().all(|r| r["标题"].as_deref() != Some("WRONG")));
+}

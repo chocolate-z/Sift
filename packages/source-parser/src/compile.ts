@@ -11,7 +11,9 @@ import type {
   Extraction,
   FieldRule as IrFieldRule,
   OutputColumn,
+  Pagination,
   ParseSpec,
+  PipelineOp,
   PlaceholderDep,
   RequestConfig,
   Rule,
@@ -21,7 +23,13 @@ import type {
   VarDecl
 } from '@sift/core-ir'
 
-import { extractPlaceholders, isJsonPathExpr, normalizeOrRaw, parseUrlDirectives } from './decoders'
+import {
+  decodeContentFilter,
+  extractPlaceholders,
+  isJsonPathExpr,
+  normalizeOrRaw,
+  parseUrlDirectives
+} from './decoders'
 import { detectSourceType, parseSearchResult } from './parser'
 import type { FieldRule as SpFieldRule, RawBookSource } from './types'
 
@@ -332,5 +340,121 @@ export function compileCatalogRule(raw: RawBookSource): Rule {
     vars,
     steps: canBuildCatalog ? [searchStep, catalogStep] : [searchStep],
     output: { format: 'records', columns, formats: ['csv', 'json'] }
+  }
+}
+
+/** 正文预览的安全上限:只抓前 N 章、每章至多 M 页,避免对上千章逐一发请求。 */
+const CHAPTER_PREVIEW_LIMIT = 3
+const CHAPTER_PAGE_LIMIT = 8
+
+/**
+ * 把书源编译为「正文」Rule:搜索 → 目录 → 每章正文(3 步链路,下载流 M3 前置)。
+ * 在 compileCatalogRule 的 2 步基础上**追加第 3 步 chapter**:对目录每一章 fanout 抓正文页,
+ * 抽 chapter_title/chapter_content;content_filter(已解码的正则)编为 `regex` 清洗管线去广告/
+ * 版权(全局替换为空);正文翻页(multi_page + next_btn)走 nextButton + appendContent 拼接同章多页。
+ * **预览防失控**:限前 N 章(目录 limit)+ 限页 + 限速(core-ir 风险 #5)。
+ * 无目录(网页源缺 book_url 已降级为仅搜索)或无正文选择器 / 章节 URL 不可得 → 返回目录规则原样。
+ */
+export function compileBookSource(raw: RawBookSource): Rule {
+  const catalogRule = compileCatalogRule(raw)
+  const catalogStep = catalogRule.steps.find((s) => s.id === 'catalog')
+  // 无目录步(仅搜索降级)或无正文选择器 → 无从抓正文,退回目录/搜索规则。
+  if (!catalogStep || typeof raw.chapter_content !== 'string' || !raw.chapter_content) return catalogRule
+
+  const isApi = detectSourceType(raw).type === 'api'
+
+  // 章节 URL 来源:七猫=item_url 模板(item_id 对齐目录字段名 chapter_id);
+  // 旧钢笔=目录抽出的 chapter_url。任一不可得 → 退回目录规则。
+  let chapterUrl: UrlSource
+  if (isApi) {
+    if (typeof raw.item_url !== 'string' || !raw.item_url) return catalogRule
+    const tmpl = raw.item_url.replace(/###item_id###/g, '###chapter_id###')
+    chapterUrl = {
+      kind: 'template',
+      template: tmpl,
+      placeholders: extractPlaceholders(tmpl).map((name) => ({
+        name,
+        satisfiedBy: { kind: 'step', stepId: 'catalog' }
+      }))
+    }
+  } else {
+    if (!catalogStep.parse.fields.chapter_url) return catalogRule
+    chapterUrl = {
+      kind: 'template',
+      template: '###chapter_url###',
+      placeholders: [{ name: 'chapter_url', satisfiedBy: { kind: 'step', stepId: 'catalog' } }]
+    }
+  }
+
+  // 预览限章:截断目录产出,fanout 只对前 N 章发请求。
+  catalogStep.parse.limit = Math.min(catalogStep.parse.limit ?? CHAPTER_PREVIEW_LIMIT, CHAPTER_PREVIEW_LIMIT)
+
+  // 站点指令(gb2312/302)同站贯穿正文页;超时同源;预览逐章抓正文,设最小间隔温和限速。
+  const directives = parseUrlDirectives(raw.search_url ?? '')
+  const chapterReq: RequestConfig = { url: chapterUrl, method: 'GET' }
+  if (directives.encoding) chapterReq.encoding = directives.encoding
+  if (directives.followRedirect) chapterReq.followRedirect = true
+  if (typeof raw.time_out === 'number') chapterReq.timeoutMs = raw.time_out
+  chapterReq.rateLimit = { minIntervalMs: 800 }
+
+  // content_filter(已 Base64 解码)→ 正文字段上的 regex 清洗管线(全局替换为空)。
+  const cleanOps: PipelineOp[] = decodeContentFilter(raw.content_filter)
+    .map((f) => (f.status === 'decoded' && f.decoded ? f.decoded : f.raw))
+    .filter((p): p is string => !!p)
+    .map((pattern): PipelineOp => ({ op: 'regex', pattern, replace: '' }))
+
+  const chapterFields: Record<string, IrFieldRule> = {}
+  if (typeof raw.chapter_title === 'string' && raw.chapter_title.trim()) {
+    chapterFields.chapter_title = {
+      selector: { engine: 'css', expr: raw.chapter_title, fallbacks: [], extract: { mode: 'text' } },
+      label: '章节标题'
+    }
+  }
+  const contentSel: SelectorExpr = {
+    engine: 'css',
+    expr: raw.chapter_content,
+    fallbacks: [],
+    extract: { mode: 'text' }
+  }
+  if (cleanOps.length) contentSel.pipeline = cleanOps
+  chapterFields.chapter_content = { selector: contentSel, label: '正文' }
+
+  // 正文翻页(旧钢笔 multi_page + next_btn):跟随「下一页」,appendContent 拼接同章多页。
+  // next_val 是「下一页」按钮的**显示文本**:仅当 next 元素文本含之才继续翻(requireText),
+  // 末页文本变化(如「下一章」)即止——不是 stopText(那是反过来的「含此即停」)。
+  let pagination: Pagination | undefined
+  if (raw.multi_page && typeof raw.next_btn === 'string' && raw.next_btn) {
+    pagination = {
+      kind: 'nextButton',
+      next: { engine: 'css', expr: raw.next_btn, fallbacks: [], extract: { mode: 'attr', name: 'href' } },
+      maxPages: CHAPTER_PAGE_LIMIT,
+      combine: 'appendContent'
+    }
+    if (typeof raw.next_val === 'string' && raw.next_val) pagination.requireText = raw.next_val
+  }
+
+  const chapterStep: CollectStep = {
+    id: 'chapter',
+    name: '正文 · Chapter',
+    request: chapterReq,
+    parse: { shape: 'page', fields: chapterFields },
+    fanout: { kind: 'perItem', overStep: 'catalog' }
+  }
+  if (pagination) chapterStep.pagination = pagination
+
+  // 输出:书名 + 章节 + [章节标题] + 正文(聚焦正文,省去作者/链接列)。
+  const columns: OutputColumn[] = []
+  if (catalogRule.steps[0]?.parse.fields.name)
+    columns.push({ name: '书名', fromField: 'name', fromStep: 'search', type: 'string' })
+  if (catalogStep.parse.fields.chapter_name)
+    columns.push({ name: '章节', fromField: 'chapter_name', fromStep: 'catalog', type: 'string' })
+  if (chapterFields.chapter_title)
+    columns.push({ name: '章节标题', fromField: 'chapter_title', fromStep: 'chapter', type: 'string' })
+  columns.push({ name: '正文', fromField: 'chapter_content', fromStep: 'chapter', type: 'string' })
+
+  return {
+    ...catalogRule,
+    steps: [...catalogRule.steps, chapterStep],
+    output: { ...catalogRule.output, columns }
   }
 }
