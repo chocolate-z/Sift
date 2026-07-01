@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
+import { ref, type Component } from 'vue'
 import {
   Bell,
   Braces,
@@ -84,6 +84,13 @@ const groups: NavGroup[] = [
 
 const app = useAppStore()
 const clock = '16:57:11'
+
+// 首启一次性免责声明(中立工具合规前置);接受后本地记录不再弹出。
+const disclaimerAccepted = ref(localStorage.getItem('sift.disclaimer.accepted') === '1')
+function acceptDisclaimer() {
+  disclaimerAccepted.value = true
+  localStorage.setItem('sift.disclaimer.accepted', '1')
+}
 </script>
 
 <template>
@@ -231,6 +238,19 @@ const clock = '16:57:11'
         <span class="sb-time mono">{{ clock }}</span>
       </div>
     </footer>
+
+    <!-- 首启免责声明 -->
+    <div v-if="!disclaimerAccepted" class="disclaimer-mask">
+      <div class="disclaimer-box">
+        <h2>使用前须知</h2>
+        <p>
+          Sift 是中立的数据采集工具,不预置任何目标站点。请遵守目标网站的服务条款与 robots
+          协议及相关法律法规,仅采集你有权访问的数据,并对使用后果自行负责。内置限速请保持开启,以减轻对目标站点的压力。
+        </p>
+        <p class="dc-sub">凭据(Cookie / Token)仅本地加密存储于系统钥匙串,请仅保存你本人有权使用的账户。</p>
+        <button type="button" class="dc-accept" @click="acceptDisclaimer">我已阅读并同意</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -239,6 +259,54 @@ const clock = '16:57:11'
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+/* 首启免责声明 */
+.disclaimer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 6, 11, 0.72);
+}
+.disclaimer-box {
+  width: 460px;
+  max-width: calc(100vw - 40px);
+  background: #15151d;
+  border: 1px solid #2a2a34;
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  line-height: 1.6;
+}
+.disclaimer-box h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.disclaimer-box p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.disclaimer-box .dc-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.dc-accept {
+  margin-top: 8px;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.3);
 }
 
 /* title bar */

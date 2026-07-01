@@ -5,7 +5,7 @@ import type { RouteRecordRaw } from 'vue-router'
 const ph = () => import('@/views/PlaceholderView.vue')
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/pick' },
+  { path: '/', redirect: '/import' },
   { path: '/pick', name: 'pick', component: () => import('@/views/PickerView.vue'), meta: { title: '点选采集' } },
   {
     path: '/import',

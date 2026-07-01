@@ -134,6 +134,19 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <div class="preview-note">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#d8b27a" stroke-width="1.5">
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="M8 7.4v3.4M8 5.2v.01" stroke-linecap="round" />
+      </svg>
+      <span>
+        点选采集目前为
+        <b>预览</b>
+        功能,尚未接入采集引擎(下方为示意界面)。要真正录入并运行规则,请用
+        <button type="button" class="pn-link" @click="router.push('/import/paste')">规则导入 ›</button>
+      </span>
+    </div>
+
     <!-- url toolbar -->
     <div class="urlbar">
       <div class="url-input">
@@ -312,6 +325,37 @@ onBeforeUnmount(() => {
 .view-head {
   padding: 14px 24px 6px;
   border-bottom: 0;
+}
+.preview-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 24px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(224, 168, 90, 0.08);
+  border: 1px solid rgba(224, 168, 90, 0.28);
+  font-size: 12px;
+  color: #d8b27a;
+  line-height: 1.5;
+}
+.preview-note svg {
+  flex: none;
+}
+.preview-note b {
+  color: #e8c58a;
+  font-weight: 700;
+}
+.pn-link {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.pn-link:hover {
+  text-decoration: underline;
 }
 .urlbar {
   display: flex;

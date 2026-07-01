@@ -1,7 +1,7 @@
 // 采集引擎前端接缝:经 Tauri invoke 调用 Rust 的 sift-engine。浏览器预览无 Tauri
 // 运行时,调用会抛出明确错误(界面应以 isTauri 守卫,或回退种子数据)。
 
-import type { Rule } from '@sift/core-ir'
+import { isRule, type Rule } from '@sift/core-ir'
 
 /** 一步执行轨迹(调试台逐步可视)。 */
 export interface StepTrace {
@@ -40,6 +40,10 @@ export function runRule(
   inputs?: Record<string, string>,
   credentials?: Record<string, string>
 ): Promise<EngineRunOutput> {
+  // IR 边界守卫:结构非法 / irVersion 不受支持的规则不下发引擎(降级而非崩溃)。
+  if (!isRule(rule)) {
+    return Promise.reject(new Error('规则结构非法或 IR 版本不受支持,无法运行。'))
+  }
   return invokeCmd<EngineRunOutput>('engine_run_rule', { rule, inputs, credentials })
 }
 

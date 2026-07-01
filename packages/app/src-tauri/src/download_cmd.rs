@@ -125,14 +125,24 @@ fn file_name_for(url: &str, idx: usize, content_type: Option<&str>) -> String {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DlEvent {
-    Queued { id: usize, name: String },
+    Queued {
+        id: usize,
+        name: String,
+    },
     Progress {
         id: usize,
         downloaded: u64,
         total: Option<u64>,
     },
-    Done { id: usize, path: String, size: u64 },
-    Failed { id: usize, error: String },
+    Done {
+        id: usize,
+        path: String,
+        size: u64,
+    },
+    Failed {
+        id: usize,
+        error: String,
+    },
 }
 
 /// 列表里先用的展示名(URL 基名;无名则「文件 N」)。最终名完成时由路径更新。
@@ -196,85 +206,84 @@ pub async fn download_files_live(
 
     // 各 future 持有 owned 克隆(Arc client / clone dir+channel / owned url),避免并发借用
     // 引用带来的生命周期纠缠("FnOnce not general enough")。
-    let mut indexed: Vec<(usize, DownloadResult)> =
-        futures_util::stream::iter(planned)
-            .map(|(id, url, reserved)| {
-                let client = client.clone();
-                let dir = dir.clone();
-                let channel = channel.clone();
-                async move {
-                    let _ = channel.send(DlEvent::Queued {
-                        id,
-                        name: provisional_name(&url, id),
-                    });
-                    let mut last = 0u64;
-                    let result = match client
-                        .download_streamed(&url, 60_000, |downloaded, total| {
-                            // 限频:每 ~64KB 或起始时回传一次,避免刷屏。
-                            if downloaded == 0 || downloaded.saturating_sub(last) >= 65_536 {
-                                last = downloaded;
-                                let _ = channel.send(DlEvent::Progress {
+    let mut indexed: Vec<(usize, DownloadResult)> = futures_util::stream::iter(planned)
+        .map(|(id, url, reserved)| {
+            let client = client.clone();
+            let dir = dir.clone();
+            let channel = channel.clone();
+            async move {
+                let _ = channel.send(DlEvent::Queued {
+                    id,
+                    name: provisional_name(&url, id),
+                });
+                let mut last = 0u64;
+                let result = match client
+                    .download_streamed(&url, 60_000, |downloaded, total| {
+                        // 限频:每 ~64KB 或起始时回传一次,避免刷屏。
+                        if downloaded == 0 || downloaded.saturating_sub(last) >= 65_536 {
+                            last = downloaded;
+                            let _ = channel.send(DlEvent::Progress {
+                                id,
+                                downloaded,
+                                total,
+                            });
+                        }
+                    })
+                    .await
+                {
+                    Ok(f) if f.status < 400 => {
+                        let name = reserved
+                            .clone()
+                            .unwrap_or_else(|| file_name_for(&url, id, f.content_type.as_deref()));
+                        let path = dir.join(name);
+                        match std::fs::write(&path, &f.bytes) {
+                            Ok(()) => {
+                                let p = path.to_string_lossy().into_owned();
+                                let size = f.bytes.len() as u64;
+                                let _ = channel.send(DlEvent::Done {
                                     id,
-                                    downloaded,
-                                    total,
+                                    path: p.clone(),
+                                    size,
                                 });
-                            }
-                        })
-                        .await
-                    {
-                        Ok(f) if f.status < 400 => {
-                            let name = reserved
-                                .clone()
-                                .unwrap_or_else(|| file_name_for(&url, id, f.content_type.as_deref()));
-                            let path = dir.join(name);
-                            match std::fs::write(&path, &f.bytes) {
-                                Ok(()) => {
-                                    let p = path.to_string_lossy().into_owned();
-                                    let size = f.bytes.len() as u64;
-                                    let _ = channel.send(DlEvent::Done {
-                                        id,
-                                        path: p.clone(),
-                                        size,
-                                    });
-                                    DownloadResult {
-                                        url,
-                                        ok: true,
-                                        path: Some(p),
-                                        size,
-                                        error: None,
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = channel.send(DlEvent::Failed {
-                                        id,
-                                        error: e.to_string(),
-                                    });
-                                    fail_result(&url, e.to_string())
+                                DownloadResult {
+                                    url,
+                                    ok: true,
+                                    path: Some(p),
+                                    size,
+                                    error: None,
                                 }
                             }
+                            Err(e) => {
+                                let _ = channel.send(DlEvent::Failed {
+                                    id,
+                                    error: e.to_string(),
+                                });
+                                fail_result(&url, e.to_string())
+                            }
                         }
-                        Ok(f) => {
-                            let err = format!("HTTP {}", f.status);
-                            let _ = channel.send(DlEvent::Failed {
-                                id,
-                                error: err.clone(),
-                            });
-                            fail_result(&url, err)
-                        }
-                        Err(e) => {
-                            let _ = channel.send(DlEvent::Failed {
-                                id,
-                                error: e.to_string(),
-                            });
-                            fail_result(&url, e.to_string())
-                        }
-                    };
-                    (id, result)
-                }
-            })
-            .buffer_unordered(MAX_CONCURRENCY)
-            .collect()
-            .await;
+                    }
+                    Ok(f) => {
+                        let err = format!("HTTP {}", f.status);
+                        let _ = channel.send(DlEvent::Failed {
+                            id,
+                            error: err.clone(),
+                        });
+                        fail_result(&url, err)
+                    }
+                    Err(e) => {
+                        let _ = channel.send(DlEvent::Failed {
+                            id,
+                            error: e.to_string(),
+                        });
+                        fail_result(&url, e.to_string())
+                    }
+                };
+                (id, result)
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENCY)
+        .collect()
+        .await;
 
     indexed.sort_by_key(|(id, _)| *id);
     Ok(DownloadBatch {
@@ -296,7 +305,10 @@ mod tests {
 
     #[test]
     fn file_name_uses_url_basename_with_extension() {
-        assert_eq!(file_name_for("https://x.com/a/cover.jpg", 0, None), "cover.jpg");
+        assert_eq!(
+            file_name_for("https://x.com/a/cover.jpg", 0, None),
+            "cover.jpg"
+        );
         assert_eq!(
             file_name_for("https://x.com/img/p.png?v=2#f", 3, Some("image/png")),
             "p.png"
@@ -305,8 +317,14 @@ mod tests {
 
     #[test]
     fn file_name_falls_back_to_index_and_content_type() {
-        assert_eq!(file_name_for("https://x.com/img/", 2, Some("image/jpeg")), "file_2.jpg");
-        assert_eq!(file_name_for("https://x.com/download?id=9", 0, Some("application/pdf")), "file_0.pdf");
+        assert_eq!(
+            file_name_for("https://x.com/img/", 2, Some("image/jpeg")),
+            "file_2.jpg"
+        );
+        assert_eq!(
+            file_name_for("https://x.com/download?id=9", 0, Some("application/pdf")),
+            "file_0.pdf"
+        );
         assert_eq!(file_name_for("https://x.com/x", 1, None), "file_1.bin");
     }
 

@@ -34,4 +34,5 @@ pub use request::{
 };
 pub use rule::{
     CollectStep, EntryPoint, Fanout, OutputColumn, OutputSpec, Pagination, Rule, RuleMeta,
+    CURRENT_IR_VERSION,
 };

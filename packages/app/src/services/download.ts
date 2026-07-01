@@ -10,6 +10,20 @@ export async function saveTextFile(name: string, content: string): Promise<strin
   return invoke<string>('save_text_file', { name, content })
 }
 
+/** 用系统默认程序打开文件(已完成记录「打开」)。 */
+export async function openPath(path: string): Promise<void> {
+  if (!isTauri) throw new Error('打开文件仅桌面端可用')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('open_path', { path })
+}
+
+/** 在文件管理器中定位(选中)文件(已完成记录「定位」)。 */
+export async function revealPath(path: string): Promise<void> {
+  if (!isTauri) throw new Error('定位文件仅桌面端可用')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('reveal_path', { path })
+}
+
 /** 单个文件的下载结果。 */
 export interface DownloadResult {
   url: string

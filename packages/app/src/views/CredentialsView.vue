@@ -95,7 +95,9 @@ function submitCred() {
           <rect x="3.2" y="7" width="9.6" height="6.5" rx="1.4" />
           <path d="M5.3 7V5a2.7 2.7 0 0 1 5.4 0v2" />
         </svg>
-        <span class="ib-text">凭据使用系统密钥链加密存储。明文仅在发起请求时于内存中临时解密。</span>
+        <span class="ib-text">
+          凭据使用系统密钥链加密存储。明文仅在发起请求时于内存中临时解密。请仅保存你本人有权使用的账户凭据,使用风险自负。
+        </span>
       </div>
 
       <div v-if="store.creds.length" class="table">

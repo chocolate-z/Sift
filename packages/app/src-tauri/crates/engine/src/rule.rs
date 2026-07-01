@@ -23,8 +23,11 @@ pub struct Rule {
     pub defaults: Option<RequestConfig>,
 }
 
+/// 当前引擎支持的最高 IR 版本;更高版本的规则应被明确拒绝,而非静默按 v1 执行。
+pub const CURRENT_IR_VERSION: u32 = 1;
+
 fn default_ir_version() -> u32 {
-    1
+    CURRENT_IR_VERSION
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

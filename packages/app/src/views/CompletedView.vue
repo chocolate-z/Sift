@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger
 } from 'reka-ui'
 import { useCompletedStore, type DoneRecord } from '@/stores/completed'
+import { openPath, revealPath } from '@/services/download'
 
 const store = useCompletedStore()
 // 跨重启恢复已完成记录(本会话已有则不覆盖)。
@@ -38,8 +39,29 @@ function doFlash(id: number, act: string) {
 function isFlash(id: number, act: string) {
   return flash.value?.id === id && flash.value?.act === act
 }
-function actLabel(r: DoneRecord, act: string, base: string, done: string) {
-  return isFlash(r.id, act) ? done : base
+function actLabel(r: DoneRecord, act: string, base: string, done: string, fail = '操作失败') {
+  if (isFlash(r.id, act)) return done
+  if (isFlash(r.id, `${act}!`)) return fail
+  return base
+}
+// 打开 / 定位:真实文件系统动作(Tauri 命令),成功/失败给瞬时反馈。
+async function openRecord(r: DoneRecord) {
+  if (!r.path) return doFlash(r.id, 'open!')
+  try {
+    await openPath(r.path)
+    doFlash(r.id, 'open')
+  } catch {
+    doFlash(r.id, 'open!')
+  }
+}
+async function locateRecord(r: DoneRecord) {
+  if (!r.path) return doFlash(r.id, 'locate!')
+  try {
+    await revealPath(r.path)
+    doFlash(r.id, 'locate')
+  } catch {
+    doFlash(r.id, 'locate!')
+  }
 }
 function batchExport() {
   exportFlash.value = true
@@ -187,8 +209,10 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="dr-actions">
-            <span class="act open" @click="doFlash(r.id, 'open')">{{ actLabel(r, 'open', '打开', '已打开 ✓') }}</span>
-            <span class="act" @click="doFlash(r.id, 'locate')">{{ actLabel(r, 'locate', '定位', '已定位 ✓') }}</span>
+            <span class="act open" @click="openRecord(r)">{{ actLabel(r, 'open', '打开', '已打开 ✓', '打不开') }}</span>
+            <span class="act" @click="locateRecord(r)">
+              {{ actLabel(r, 'locate', '定位', '已定位 ✓', '定位失败') }}
+            </span>
             <span class="act" @click="doFlash(r.id, 'export')">{{ actLabel(r, 'export', '重导出', '已导出 ✓') }}</span>
             <span class="act del" @click="store.remove(r.id)">删除</span>
           </div>
