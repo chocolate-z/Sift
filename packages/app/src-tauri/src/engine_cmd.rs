@@ -1,11 +1,12 @@
 //! 采集引擎的 Tauri 命令接缝。前端 `invoke('engine_run_rule', { rule, inputs })`
 //! 即可执行一条 Rule IR 拿到结构化结果。错误统一降为字符串供 IPC 序列化。
 //!
-//! 限速暂用不限速 client(规则级 rateLimit 接入待后续);凭据由前端传入已解密的
-//! credentialRef→Cookie 映射,加密库握手待凭据存储小步。
+//! 限速据规则的 rateLimit 构造 client 级限速器(默认开、以全局默认兜底);凭据由前端传入
+//! 已解密的 credentialRef→Cookie 映射,加密库握手待凭据存储小步。
 
 use sift_engine::{
-    run_rule, Credentials, HttpClient, Rule, RunOutput, VarScope, CURRENT_IR_VERSION,
+    rule_min_interval, run_rule, Credentials, HttpClient, RateLimiter, Rule, RunOutput, VarScope,
+    CURRENT_IR_VERSION,
 };
 
 /// 执行整条规则,返回友好列记录 + 每步原始记录 + 告警。
@@ -22,7 +23,9 @@ pub async fn engine_run_rule(
             rule.ir_version, CURRENT_IR_VERSION
         ));
     }
-    let client = HttpClient::unlimited().map_err(|e| e.to_string())?;
+    // 限速默认开:据规则最保守的 rateLimit 构造 client 级限速器(未设时用全局默认兜底)。
+    let client =
+        HttpClient::new(RateLimiter::new(rule_min_interval(&rule))).map_err(|e| e.to_string())?;
     run_rule(
         &client,
         &rule,

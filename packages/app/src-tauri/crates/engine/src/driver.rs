@@ -4,6 +4,7 @@
 //! 仅取首页。`extracted` URL 经 fanout 把上游项字段绑入作用域后用模板引用。
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::Serialize;
 use url::Url;
@@ -18,6 +19,29 @@ use crate::rule::{
 
 /// 翻页安全上限,防止失控。
 const DEFAULT_MAX_PAGES: u32 = 50;
+
+/// 全局默认最小请求间隔(§4「限速默认开」的兜底):规则未设更严时也节流。500ms ≈ 2 req/s。
+pub const DEFAULT_MIN_INTERVAL_MS: u64 = 500;
+
+/// 据规则算 client 级最小请求间隔:取 defaults + 各步 rateLimit 里最保守(最大)者,再以
+/// 全局默认兜底(floor),保证即便规则没设也限速。供调度层构造共享 RateLimiter。
+pub fn rule_min_interval(rule: &Rule) -> Duration {
+    fn interval_of(cfg: &RequestConfig) -> Option<u64> {
+        cfg.rate_limit.as_ref().and_then(|rl| rl.effective_min_interval_ms())
+    }
+    let mut ms = DEFAULT_MIN_INTERVAL_MS;
+    if let Some(d) = &rule.defaults {
+        if let Some(v) = interval_of(d) {
+            ms = ms.max(v);
+        }
+    }
+    for step in &rule.steps {
+        if let Some(v) = interval_of(&step.request) {
+            ms = ms.max(v);
+        }
+    }
+    Duration::from_millis(ms)
+}
 
 /// 一轮采集的产物。
 #[derive(Debug, Clone, Serialize)]
@@ -605,6 +629,7 @@ mod tests {
                 timeout_ms: None,
                 retry: None,
                 url_replace_rules: Vec::new(),
+                rate_limit: None,
             },
             parse: empty_parse(),
             inputs: vec![StepInput {
@@ -623,6 +648,77 @@ mod tests {
         let current = rec(&[("book_id", "111")]);
         apply_inputs(&mut scope, &step, &current, &BTreeMap::new());
         assert_eq!(scope.get("bid").map(String::as_str), Some("111"));
+    }
+
+    fn step_with_rate(rl: Option<crate::exec::RateLimit>) -> CollectStep {
+        CollectStep {
+            id: "s".into(),
+            name: "s".into(),
+            request: crate::exec::RequestConfig {
+                url: crate::exec::UrlSource::Static { url: "http://x/".into() },
+                method: Default::default(),
+                headers: BTreeMap::new(),
+                body: None,
+                credential_ref: None,
+                user_agent: None,
+                encoding: None,
+                follow_redirect: None,
+                timeout_ms: None,
+                retry: None,
+                url_replace_rules: Vec::new(),
+                rate_limit: rl,
+            },
+            parse: empty_parse(),
+            inputs: Vec::new(),
+            produces: Vec::new(),
+            fanout: None,
+            pagination: None,
+            optional: false,
+        }
+    }
+
+    fn rule_with_steps(steps: Vec<CollectStep>) -> crate::rule::Rule {
+        crate::rule::Rule {
+            ir_version: 1,
+            meta: crate::rule::RuleMeta {
+                id: "t".into(),
+                name: "t".into(),
+                origin: "handwritten".into(),
+                source_type: "web".into(),
+                source_url: None,
+                remark: None,
+            },
+            entry: crate::rule::EntryPoint::None,
+            vars: Vec::new(),
+            steps,
+            output: crate::rule::OutputSpec {
+                format: "records".into(),
+                columns: Vec::new(),
+                track_provenance: None,
+                formats: Vec::new(),
+            },
+            defaults: None,
+        }
+    }
+
+    #[test]
+    fn rule_min_interval_takes_most_conservative_with_floor() {
+        let rl = |ms: u64| {
+            Some(crate::exec::RateLimit {
+                min_interval_ms: Some(ms),
+                per_second: None,
+                concurrency: None,
+            })
+        };
+        // 无 rateLimit → 全局默认兜底。
+        let r0 = rule_with_steps(vec![step_with_rate(None)]);
+        assert_eq!(rule_min_interval(&r0), Duration::from_millis(DEFAULT_MIN_INTERVAL_MS));
+        // 某步设更严 800ms → 取最保守 800。
+        let r1 = rule_with_steps(vec![step_with_rate(None), step_with_rate(rl(800))]);
+        assert_eq!(rule_min_interval(&r1), Duration::from_millis(800));
+        // 某步设更松 200ms → 被默认兜底,不放松(限速默认开)。
+        let r2 = rule_with_steps(vec![step_with_rate(rl(200))]);
+        assert_eq!(rule_min_interval(&r2), Duration::from_millis(DEFAULT_MIN_INTERVAL_MS));
     }
 
     fn empty_parse() -> crate::parse::ParseSpec {

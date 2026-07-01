@@ -20,9 +20,9 @@ pub mod pipeline;
 pub mod request;
 pub mod rule;
 
-pub use driver::{run_rule, RunOutput};
+pub use driver::{rule_min_interval, run_rule, RunOutput};
 pub use error::{EngineError, EngineResult};
-pub use exec::{lower_request, substitute, Credentials, RequestConfig, UrlSource, VarScope};
+pub use exec::{lower_request, substitute, Credentials, RateLimit, RequestConfig, UrlSource, VarScope};
 pub use parse::{
     ContentFilter, Extraction, FieldRule, ListSpec, ParseOutput, ParseSpec, Record, SelectorExpr,
     Shape,

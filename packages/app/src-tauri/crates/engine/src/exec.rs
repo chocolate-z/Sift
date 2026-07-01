@@ -19,7 +19,7 @@ pub type VarScope = BTreeMap<String, String>;
 pub type Credentials = BTreeMap<String, String>;
 
 /// core-ir RequestConfig 的镜像(已解析形态)。phase-2 facet(proxy/render/sniff)
-/// 与 rateLimit 此处不建模:前者后置,后者属 client 级,serde 默认忽略。
+/// 此处不建模(后置,serde 默认忽略)。rateLimit 已建模,由调度层据此构造 client 级限速器。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestConfig {
@@ -45,6 +45,34 @@ pub struct RequestConfig {
     pub retry: Option<RetryPolicy>,
     #[serde(default)]
     pub url_replace_rules: Vec<UrlReplaceRule>,
+    /// 限速配置(§4 MVP「默认开」)。调度层取规则里最保守者并以全局默认兜底。
+    #[serde(default)]
+    pub rate_limit: Option<RateLimit>,
+}
+
+/// 限速配置(core-ir RateLimit 镜像)。concurrency 暂不单独强制,由 min-interval 串行化节流。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimit {
+    #[serde(default)]
+    pub concurrency: Option<u32>,
+    #[serde(default)]
+    pub per_second: Option<f64>,
+    #[serde(default)]
+    pub min_interval_ms: Option<u64>,
+}
+
+impl RateLimit {
+    /// 有效最小请求间隔(ms):优先 minIntervalMs,否则由 perSecond 换算;都无则 None。
+    pub fn effective_min_interval_ms(&self) -> Option<u64> {
+        if let Some(ms) = self.min_interval_ms {
+            return Some(ms);
+        }
+        match self.per_second {
+            Some(r) if r > 0.0 => Some((1000.0 / r).round() as u64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -217,6 +245,7 @@ mod tests {
             timeout_ms: None,
             retry: None,
             url_replace_rules: Vec::new(),
+            rate_limit: None,
         }
     }
 
@@ -363,7 +392,8 @@ mod tests {
             "encoding": "gb2312",
             "followRedirect": true,
             "timeoutMs": 6000,
-            "urlReplaceRules": [{ "from": "http://m", "to": "http://www" }]
+            "urlReplaceRules": [{ "from": "http://m", "to": "http://www" }],
+            "rateLimit": { "minIntervalMs": 800 }
         }"#;
         let cfg: RequestConfig = serde_json::from_str(json).unwrap();
         assert!(matches!(cfg.url, UrlSource::Template { .. }));
@@ -371,5 +401,27 @@ mod tests {
         assert_eq!(cfg.credential_ref.as_deref(), Some("cred-1"));
         assert_eq!(cfg.timeout_ms, Some(6000));
         assert_eq!(cfg.url_replace_rules.len(), 1);
+        // rateLimit 不再被静默丢弃(限速接线前的 P0)。
+        assert_eq!(cfg.rate_limit.and_then(|r| r.effective_min_interval_ms()), Some(800));
+    }
+
+    #[test]
+    fn rate_limit_effective_interval() {
+        // minIntervalMs 优先。
+        let a = RateLimit {
+            min_interval_ms: Some(800),
+            per_second: Some(10.0),
+            concurrency: None,
+        };
+        assert_eq!(a.effective_min_interval_ms(), Some(800));
+        // 无 minIntervalMs 时按 perSecond 换算(4 req/s → 250ms)。
+        let b = RateLimit {
+            min_interval_ms: None,
+            per_second: Some(4.0),
+            concurrency: None,
+        };
+        assert_eq!(b.effective_min_interval_ms(), Some(250));
+        // 都无 → None。
+        assert_eq!(RateLimit::default().effective_min_interval_ms(), None);
     }
 }
