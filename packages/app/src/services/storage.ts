@@ -81,3 +81,25 @@ export function listCompleted(): Promise<SavedCompleted[]> {
 export function deleteCompleted(id: number): Promise<boolean> {
   return invokeCmd<boolean>('db_delete_completed', { id })
 }
+
+/** 已保存的采集规则(原始 JSON 文本 + 元信息;跨重启留存,可重载重跑)。 */
+export interface SavedRuleMeta {
+  id: number
+  name: string
+  createdAt: string
+}
+
+/** 存一条规则(name + 原始 JSON 文本),返回新 id。 */
+export function saveRule(name: string, json: string): Promise<number> {
+  return invokeCmd<number>('db_save_rule', { name, json })
+}
+export function listRules(): Promise<SavedRuleMeta[]> {
+  return invokeCmd<SavedRuleMeta[]>('db_list_rules')
+}
+/** 读回规则 JSON 文本;不存在返回 null。 */
+export function loadRule(id: number): Promise<string | null> {
+  return invokeCmd<string | null>('db_load_rule', { id })
+}
+export function deleteRule(id: number): Promise<boolean> {
+  return invokeCmd<boolean>('db_delete_rule', { id })
+}

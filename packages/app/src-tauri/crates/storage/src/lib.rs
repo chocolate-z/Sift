@@ -44,6 +44,15 @@ pub struct CompletedRow {
     pub created_at: String,
 }
 
+/// 已存采集规则的元信息(列表用;规则 JSON 主体另存)。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleMeta {
+    pub id: i64,
+    pub name: String,
+    pub created_at: String,
+}
+
 /// 一条凭据的元信息(**不含密文**——密文进 OS 钥匙串,这里只存可列出的元数据)。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +96,12 @@ CREATE TABLE IF NOT EXISTS credentials (
     domain     TEXT NOT NULL DEFAULT '',
     cred_type  TEXT NOT NULL DEFAULT 'Cookie',
     status     TEXT NOT NULL DEFAULT 'valid',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS saved_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    json       TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#;
@@ -286,6 +301,49 @@ impl Db {
         let n = conn.execute("DELETE FROM credentials WHERE id = ?1", rusqlite::params![id])?;
         Ok(n > 0)
     }
+
+    /// 存一条采集规则(name + 原始 JSON 文本),返回新 id。
+    pub fn save_rule(&self, name: &str, json: &str) -> Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO saved_rules (name, json) VALUES (?1, ?2)",
+            rusqlite::params![name, json],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 列出已存规则(新→旧;不含 JSON 主体)。
+    pub fn list_rules(&self) -> Result<Vec<RuleMeta>> {
+        let conn = self.lock();
+        let mut stmt =
+            conn.prepare("SELECT id, name, created_at FROM saved_rules ORDER BY id DESC")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(RuleMeta {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                created_at: r.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 按 id 读回规则 JSON 主体;不存在返回 None。
+    pub fn load_rule(&self, id: i64) -> Result<Option<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT json FROM saved_rules WHERE id = ?1")?;
+        let mut rows = stmt.query(rusqlite::params![id])?;
+        match rows.next()? {
+            Some(r) => Ok(Some(r.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 删除一条规则,返回是否删到。
+    pub fn delete_rule(&self, id: i64) -> Result<bool> {
+        let conn = self.lock();
+        let n = conn.execute("DELETE FROM saved_rules WHERE id = ?1", rusqlite::params![id])?;
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +419,27 @@ mod tests {
         assert!(db.delete_credential(id).unwrap());
         assert_eq!(db.list_credentials().unwrap().len(), 0);
         assert!(!db.delete_credential(999).unwrap());
+    }
+
+    #[test]
+    fn rule_save_list_load_delete_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.save_rule("示例采集源", r#"{"source_name":"示例采集源","search_url":"x"}"#).unwrap();
+        assert!(id > 0);
+
+        let list = db.list_rules().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "示例采集源");
+        assert!(!list[0].created_at.is_empty());
+
+        let json = db.load_rule(id).unwrap().unwrap();
+        assert!(json.contains("示例采集源"));
+        assert!(json.contains("search_url"));
+
+        assert!(db.delete_rule(id).unwrap());
+        assert!(db.load_rule(id).unwrap().is_none());
+        assert_eq!(db.list_rules().unwrap().len(), 0);
+        assert!(!db.delete_rule(999).unwrap());
     }
 
     #[test]

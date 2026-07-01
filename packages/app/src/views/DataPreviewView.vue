@@ -234,6 +234,20 @@ onMounted(async () => {
   <section class="view data">
     <header class="head">
       <div class="title-row">
+        <button type="button" class="back-btn" title="返回上一页" @click="router.back()">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M10 3L5 8l5 5" />
+          </svg>
+          返回
+        </button>
         <h1>数据预览</h1>
         <span class="from-badge">
           <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor">
@@ -516,6 +530,23 @@ onMounted(async () => {
 .title-sub {
   font-size: 13px;
   color: var(--text-secondary);
+}
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid #2e2e38;
+  color: #cdccd8;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.back-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* 状态行 */

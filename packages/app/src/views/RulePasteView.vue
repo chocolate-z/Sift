@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DropdownMenuContent,
@@ -19,9 +19,18 @@ import type { Rule } from '@sift/core-ir'
 import { EXAMPLE_RULE } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
 import { credRef, resolveRuleCredentials } from '@/services/credentials'
-import { saveDataset } from '@/services/storage'
+import {
+  deleteRule,
+  listRules,
+  loadRule,
+  saveDataset,
+  saveRule,
+  storageAvailable,
+  type SavedRuleMeta
+} from '@/services/storage'
 import { useDatasetStore } from '@/stores/dataset'
 import { useCredentialsStore } from '@/stores/credentials'
+import { relTime } from '@/utils/time'
 
 const router = useRouter()
 const dataset = useDatasetStore()
@@ -35,7 +44,16 @@ const selectedCredName = computed(() => {
   return credStore.creds.find((c) => c.dbId === selectedCredId.value)?.name ?? '不使用凭据'
 })
 
-const input = ref(JSON.stringify(EXAMPLE_RULE, null, 2))
+// 记住上次粘贴的规则(离开数据预览再回来不丢);无则回落示例。
+const PASTE_KEY = 'sift.paste.input'
+const input = ref(localStorage.getItem(PASTE_KEY) ?? JSON.stringify(EXAMPLE_RULE, null, 2))
+watch(input, (v) => localStorage.setItem(PASTE_KEY, v))
+
+// 已保存规则(本地库,跨重启;可重载重跑)。
+const savedRules = ref<SavedRuleMeta[]>([])
+const savedOpen = ref(false)
+const saveFlash = ref(false)
+
 const result = ref<ParseResult | null>(null)
 const error = ref<string | null>(null)
 const rawObj = ref<Record<string, unknown> | null>(null)
@@ -69,6 +87,51 @@ function parse() {
 function loadExample() {
   input.value = JSON.stringify(EXAMPLE_RULE, null, 2)
   parse()
+}
+
+async function refreshSavedRules() {
+  if (!storageAvailable) return
+  try {
+    savedRules.value = await listRules()
+  } catch {
+    // 无库 / 读取失败:保持现列表。
+  }
+}
+async function doSaveRule() {
+  if (!storageAvailable) return
+  // 规则名取 JSON 里的 source_name(非法 JSON 也允许存草稿,名字用默认)。
+  let name = '未命名规则'
+  try {
+    const o = JSON.parse(input.value) as { source_name?: unknown }
+    if (typeof o.source_name === 'string' && o.source_name) name = o.source_name
+  } catch {
+    // 忽略:草稿也可保存。
+  }
+  try {
+    await saveRule(name, input.value)
+    saveFlash.value = true
+    setTimeout(() => {
+      saveFlash.value = false
+    }, 1500)
+    refreshSavedRules()
+  } catch {
+    // 桌面端极少失败;失败静默(浏览器预览已被 storageAvailable 挡住)。
+  }
+}
+async function loadSavedRule(m: SavedRuleMeta) {
+  savedOpen.value = false
+  const json = await loadRule(m.id)
+  if (json == null) return
+  input.value = json
+  parse()
+}
+async function removeSavedRule(m: SavedRuleMeta) {
+  try {
+    await deleteRule(m.id)
+  } catch {
+    // 忽略
+  }
+  refreshSavedRules()
 }
 
 async function runCompiled(rule: Rule) {
@@ -133,6 +196,7 @@ const depLabel = (by: 'input' | number | 'unknown') =>
 onMounted(() => {
   parse()
   credStore.restore()
+  refreshSavedRules()
 })
 </script>
 
@@ -155,6 +219,43 @@ onMounted(() => {
           <span class="ed-label">采集规则 JSON</span>
           <span class="ed-samples">
             <button type="button" class="chip-btn" @click="loadExample">载入示例</button>
+            <template v-if="storageAvailable">
+              <button type="button" class="chip-btn" @click="doSaveRule">
+                {{ saveFlash ? '已保存 ✓' : '保存规则' }}
+              </button>
+              <DropdownMenuRoot v-model:open="savedOpen">
+                <DropdownMenuTrigger as-child>
+                  <button type="button" class="chip-btn">
+                    已保存
+                    <span v-if="savedRules.length" class="rule-count">{{ savedRules.length }}</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuContent class="rp-menu" align="end" :side-offset="6" @open-auto-focus.prevent>
+                    <div v-if="!savedRules.length" class="rp-rule-empty">暂无已保存规则</div>
+                    <div v-for="m in savedRules" :key="m.id" class="rp-rule-row">
+                      <button type="button" class="rp-rule-main" @click="loadSavedRule(m)">
+                        <span class="rp-rule-name">{{ m.name }}</span>
+                        <span class="rp-rule-meta">{{ relTime(m.createdAt) }}</span>
+                      </button>
+                      <button type="button" class="rp-rule-del" title="删除" @click="removeSavedRule(m)">
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round">
+                          <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8" />
+                        </svg>
+                      </button>
+                    </div>
+                  </DropdownMenuContent>
+                </DropdownMenuPortal>
+              </DropdownMenuRoot>
+            </template>
           </span>
         </div>
         <textarea v-model="input" class="ed-area mono" spellcheck="false" />
@@ -420,6 +521,11 @@ onMounted(() => {
 }
 .chip-btn:hover {
   border-color: var(--accent);
+  color: var(--accent-text);
+}
+.rule-count {
+  margin-left: 5px;
+  font-size: 9.5px;
   color: var(--accent-text);
 }
 .ed-area {
@@ -906,5 +1012,59 @@ onMounted(() => {
   padding: 8px 10px;
   font-size: 11.5px;
   color: #7a7a87;
+}
+.rp-rule-empty {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: #7a7a87;
+}
+.rp-rule-row {
+  display: flex;
+  align-items: center;
+  border-radius: 7px;
+}
+.rp-rule-row:hover {
+  background: rgba(124, 92, 252, 0.1);
+}
+.rp-rule-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.rp-rule-name {
+  font-size: 12.5px;
+  color: #cdccd8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-rule-meta {
+  font-size: 10.5px;
+  color: #7a7a87;
+}
+.rp-rule-del {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 4px;
+  background: none;
+  border: none;
+  color: #7a7a87;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.rp-rule-del:hover {
+  color: #f1837d;
+  background: rgba(224, 68, 62, 0.12);
 }
 </style>

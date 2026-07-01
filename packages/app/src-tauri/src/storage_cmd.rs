@@ -2,7 +2,7 @@
 //! Db 在 setup 时按应用数据目录打开并 manage 进 State。
 
 use serde::Deserialize;
-use sift_storage::{CompletedRow, DatasetBlob, DatasetMeta, Db};
+use sift_storage::{CompletedRow, DatasetBlob, DatasetMeta, Db, RuleMeta};
 use tauri::State;
 
 #[tauri::command]
@@ -68,4 +68,24 @@ pub fn db_list_completed(db: State<Db>) -> Result<Vec<CompletedRow>, String> {
 #[tauri::command]
 pub fn db_delete_completed(db: State<Db>, id: i64) -> Result<bool, String> {
     db.delete_completed(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_save_rule(db: State<Db>, name: String, json: String) -> Result<i64, String> {
+    db.save_rule(&name, &json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_list_rules(db: State<Db>) -> Result<Vec<RuleMeta>, String> {
+    db.list_rules().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_load_rule(db: State<Db>, id: i64) -> Result<Option<String>, String> {
+    db.load_rule(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_delete_rule(db: State<Db>, id: i64) -> Result<bool, String> {
+    db.delete_rule(id).map_err(|e| e.to_string())
 }
