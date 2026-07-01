@@ -117,22 +117,24 @@ impl HttpClient {
     /// 流式下载一个 URL 的原始字节(图片/文件下载用,不解码为文本),边下边回调
     /// `on_progress(downloaded, total)`(total 来自 Content-Length,可能缺)。跟随重定向、
     /// 走限速;状态码不在此判定成败(返回 status,由调用方据 >=400 判失败)。
+    /// `idle_timeout_ms` 是**空闲超时**(idle 内无新字节才中止),非整体墙钟时限——大/慢文件
+    /// 只要持续推进就能下完;连接+响应头另设 30s 上限避免 send 挂死。
     pub async fn download_streamed(
         &self,
         url: &str,
-        timeout_ms: u64,
+        idle_timeout_ms: u64,
         mut on_progress: impl FnMut(u64, Option<u64>),
     ) -> EngineResult<DownloadedFile> {
         if url.trim().is_empty() {
             return Err(EngineError::InvalidRequest("URL 为空".into()));
         }
         self.limiter.acquire().await;
-        let mut resp = self
-            .follow
-            .get(url)
-            .timeout(Duration::from_millis(timeout_ms))
-            .send()
-            .await?;
+        let idle = Duration::from_millis(idle_timeout_ms);
+        let mut resp =
+            match tokio::time::timeout(Duration::from_secs(30), self.follow.get(url).send()).await {
+                Ok(r) => r?,
+                Err(_) => return Err(EngineError::InvalidRequest("下载连接超时".into())),
+            };
         let status = resp.status().as_u16();
         let content_type = resp
             .headers()
@@ -143,9 +145,16 @@ impl HttpClient {
         // 预分配上限 8MB,避免超大 Content-Length 一次性占内存。
         let mut bytes: Vec<u8> = Vec::with_capacity(total.unwrap_or(0).min(8 << 20) as usize);
         on_progress(0, total);
-        while let Some(chunk) = resp.chunk().await? {
-            bytes.extend_from_slice(&chunk);
-            on_progress(bytes.len() as u64, total);
+        loop {
+            match tokio::time::timeout(idle, resp.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    bytes.extend_from_slice(&chunk);
+                    on_progress(bytes.len() as u64, total);
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => return Err(EngineError::InvalidRequest("下载空闲超时".into())),
+            }
         }
         Ok(DownloadedFile {
             status,

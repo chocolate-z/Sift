@@ -67,6 +67,7 @@ const fileColumns = computed(() => ds.columns.filter((c) => c.type === 'image' |
 // 批量下载:收集选中行 图片/链接 列里的绝对 URL → 交下载队列(并发+实时进度)→ 跳下载队列屏。
 function downloadSelected() {
   if (selectedCount.value === 0) return
+  if (downloads.running) return flashExport('下载进行中,请等当前批完成')
   const urls: string[] = []
   ds.rows.forEach((r, i) => {
     if (!selected.value[i]) return
@@ -354,7 +355,12 @@ onMounted(async () => {
             </svg>
             {{ saving ? '保存中…' : '导出文本 TXT' }}
           </button>
-          <button v-else type="button" class="btn-dl" :disabled="selectedCount === 0" @click="downloadSelected">
+          <button
+            v-else
+            type="button"
+            class="btn-dl"
+            :disabled="selectedCount === 0 || downloads.running"
+            @click="downloadSelected">
             <svg
               width="13"
               height="13"

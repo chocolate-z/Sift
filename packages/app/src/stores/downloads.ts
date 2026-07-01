@@ -69,6 +69,8 @@ export const useDownloadsStore = defineStore('downloads', () => {
 
   /** 启动一批下载:种入队列 → 流式接收进度 → 全部结束后记入「已完成」。 */
   async function startBatch(urls: string[], subdir: string, source: string) {
+    // 重入保护:上一批未完成前不启新批,否则旧批在途 Channel 事件会按 id 错更新批行。
+    if (running.value || !urls.length) return
     items.value = urls.map((u, i) => ({
       id: i,
       name: urlName(u, i),

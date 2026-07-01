@@ -92,16 +92,28 @@ fn ext_for_content_type(ct: &str) -> Option<&'static str> {
     })
 }
 
-/// 为下载的文件取名:优先用 URL 路径基名(带扩展名);否则 file_{idx} + 由 Content-Type 推断扩展名。
-fn file_name_for(url: &str, idx: usize, content_type: Option<&str>) -> String {
-    let raw = url
-        .split(['?', '#'])
+/// URL 路径最后一段(去查询/锚点、去两端空白)。
+fn url_basename(url: &str) -> &str {
+    url.split(['?', '#'])
         .next()
         .unwrap_or(url)
         .rsplit('/')
         .next()
         .unwrap_or("")
-        .trim();
+        .trim()
+}
+
+/// 在文件名扩展名前插入后缀(cover.jpg + "_1" → cover_1.jpg;无扩展名则直接追加)。
+fn insert_suffix(name: &str, suffix: &str) -> String {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => format!("{}{}{}", &name[..dot], suffix, &name[dot..]),
+        _ => format!("{name}{suffix}"),
+    }
+}
+
+/// 为下载的文件取名:优先用 URL 路径基名(带扩展名);否则 file_{idx} + 由 Content-Type 推断扩展名。
+fn file_name_for(url: &str, idx: usize, content_type: Option<&str>) -> String {
+    let raw = url_basename(url);
     if raw.contains('.') && !raw.ends_with('.') {
         return sanitize_filename(raw);
     }
@@ -125,14 +137,7 @@ pub enum DlEvent {
 
 /// 列表里先用的展示名(URL 基名;无名则「文件 N」)。最终名完成时由路径更新。
 fn provisional_name(url: &str, id: usize) -> String {
-    let raw = url
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(url)
-        .rsplit('/')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let raw = url_basename(url);
     if raw.is_empty() {
         format!("文件 {}", id + 1)
     } else {
@@ -163,11 +168,37 @@ pub async fn download_files_live(
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let client = std::sync::Arc::new(HttpClient::unlimited().map_err(|e| e.to_string())?);
 
+    // 串行预分配唯一文件名:基名带扩展名的先定名去重(同批 cover.jpg×N → cover.jpg/cover_1.jpg…),
+    // 避免并发 std::fs::write 写同一路径互相覆盖静默丢文件;无扩展名的留待下载后按 Content-Type
+    // 定(file_{id} 天然唯一)。
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let planned: Vec<(usize, String, Option<String>)> = urls
+        .into_iter()
+        .enumerate()
+        .map(|(id, url)| {
+            let raw = url_basename(&url);
+            let reserved = if raw.contains('.') && !raw.ends_with('.') {
+                let base = sanitize_filename(raw);
+                let mut name = base.clone();
+                let mut k = 1;
+                while used.contains(&name) {
+                    name = insert_suffix(&base, &format!("_{k}"));
+                    k += 1;
+                }
+                used.insert(name.clone());
+                Some(name)
+            } else {
+                None
+            };
+            (id, url, reserved)
+        })
+        .collect();
+
     // 各 future 持有 owned 克隆(Arc client / clone dir+channel / owned url),避免并发借用
     // 引用带来的生命周期纠缠("FnOnce not general enough")。
     let mut indexed: Vec<(usize, DownloadResult)> =
-        futures_util::stream::iter(urls.into_iter().enumerate())
-            .map(|(id, url)| {
+        futures_util::stream::iter(planned)
+            .map(|(id, url, reserved)| {
                 let client = client.clone();
                 let dir = dir.clone();
                 let channel = channel.clone();
@@ -192,7 +223,10 @@ pub async fn download_files_live(
                         .await
                     {
                         Ok(f) if f.status < 400 => {
-                            let path = dir.join(file_name_for(&url, id, f.content_type.as_deref()));
+                            let name = reserved
+                                .clone()
+                                .unwrap_or_else(|| file_name_for(&url, id, f.content_type.as_deref()));
+                            let path = dir.join(name);
                             match std::fs::write(&path, &f.bytes) {
                                 Ok(()) => {
                                     let p = path.to_string_lossy().into_owned();
@@ -251,7 +285,14 @@ pub async fn download_files_live(
 
 #[cfg(test)]
 mod tests {
-    use super::{file_name_for, sanitize_filename};
+    use super::{file_name_for, insert_suffix, sanitize_filename};
+
+    #[test]
+    fn insert_suffix_goes_before_extension() {
+        assert_eq!(insert_suffix("cover.jpg", "_1"), "cover_1.jpg");
+        assert_eq!(insert_suffix("archive.tar.gz", "_2"), "archive.tar_2.gz");
+        assert_eq!(insert_suffix("noext", "_3"), "noext_3");
+    }
 
     #[test]
     fn file_name_uses_url_basename_with_extension() {
