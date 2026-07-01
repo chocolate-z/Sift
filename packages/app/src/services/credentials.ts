@@ -1,6 +1,7 @@
 // 凭据前端接缝:元信息经 SQLite、**密文经 OS 钥匙串**(Windows 凭据管理器 / macOS Keychain)。
 // 密文只在保存/更新时传入,列表只回元信息;明文运行时按 credentialRef 用 getCredential 读。
 
+import type { Rule } from '@sift/core-ir'
 import { storageAvailable } from './storage'
 
 /** 凭据元信息(列表用,不含密文)。 */
@@ -42,4 +43,28 @@ export function getCredential(id: number): Promise<string> {
 }
 export function deleteCredential(id: number): Promise<boolean> {
   return invokeCmd<boolean>('cred_delete', { id })
+}
+
+/** 凭据引用格式:须与 Rust 钥匙串账户 `cred-{id}` 一致,否则引擎按 ref 精确匹配取不到密文。 */
+export function credRef(dbId: number): string {
+  return `cred-${dbId}`
+}
+
+/**
+ * 遍历规则收集全部 credentialRef(默认请求 + 各步 request),按 ref 解出明文,
+ * 组成引擎所需的 credentialRef→Cookie 映射。无引用时返回空表(不触钥匙串)。
+ * 解不出(密文已删 / 钥匙串缺失)则抛出,由调用方以运行失败提示。
+ */
+export async function resolveRuleCredentials(rule: Rule): Promise<Record<string, string>> {
+  const refs = new Set<string>()
+  if (rule.defaults?.credentialRef) refs.add(rule.defaults.credentialRef)
+  for (const step of rule.steps) {
+    if (step.request.credentialRef) refs.add(step.request.credentialRef)
+  }
+  const map: Record<string, string> = {}
+  for (const ref of refs) {
+    const m = /^cred-(\d+)$/.exec(ref)
+    if (m) map[ref] = await getCredential(Number(m[1]))
+  }
+  return map
 }

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDatasetStore } from '@/stores/dataset'
 import { isTauri, runRule, type EngineRunOutput, type StepTrace } from '@/services/engine'
+import { resolveRuleCredentials } from '@/services/credentials'
 
 const router = useRouter()
 const ds = useDatasetStore()
@@ -58,7 +59,9 @@ async function runDebug() {
   running.value = true
   try {
     const inputs = { ...ds.lastInputs, [kwParam.value]: keyword.value }
-    const out = await runRule(ds.lastRule!, inputs)
+    // 复用上次运行时盖到规则上的 credentialRef,重新解出 Cookie(否则重跑丢凭据)。
+    const credentials = await resolveRuleCredentials(ds.lastRule!)
+    const out = await runRule(ds.lastRule!, inputs, credentials)
     result.value = out
     // 默认选中第一个有问题的步骤(失败/告警),否则最后一步。
     const bad = out.traces.findIndex((t) => stepStatus(t) !== 'ok')

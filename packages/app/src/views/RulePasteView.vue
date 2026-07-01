@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuTrigger
+} from 'reka-ui'
 import {
   compileBookSource,
   compileCatalogRule,
@@ -11,11 +18,22 @@ import {
 import type { Rule } from '@sift/core-ir'
 import { EXAMPLE_RULE } from '@/data/sampleSources'
 import { isTauri, runRule } from '@/services/engine'
+import { credRef, resolveRuleCredentials } from '@/services/credentials'
 import { saveDataset } from '@/services/storage'
 import { useDatasetStore } from '@/stores/dataset'
+import { useCredentialsStore } from '@/stores/credentials'
 
 const router = useRouter()
 const dataset = useDatasetStore()
+const credStore = useCredentialsStore()
+
+// 运行时可选挂载一条 Cookie 凭据(selectedCredId = Cred.dbId,即钥匙串 id;null = 不使用)。
+const selectedCredId = ref<number | null>(null)
+const cookieCreds = computed(() => credStore.creds.filter((c) => c.type === 'Cookie' && c.dbId != null))
+const selectedCredName = computed(() => {
+  if (selectedCredId.value == null) return '不使用凭据'
+  return credStore.creds.find((c) => c.dbId === selectedCredId.value)?.name ?? '不使用凭据'
+})
 
 const input = ref(JSON.stringify(EXAMPLE_RULE, null, 2))
 const result = ref<ParseResult | null>(null)
@@ -57,7 +75,12 @@ async function runCompiled(rule: Rule) {
   runError.value = null
   runNotice.value = null
   const param = rule.entry.kind === 'keyword' ? rule.entry.param : 'keyword'
-  // 记录最近规则与输入,供调试台「开始调试」复用重跑。
+  // 挂载凭据:把 credentialRef 盖到每步请求(引擎按 cfg.credentialRef 精确解出 Cookie)。
+  if (selectedCredId.value != null) {
+    const ref = credRef(selectedCredId.value)
+    for (const step of rule.steps) step.request.credentialRef = ref
+  }
+  // 记录最近规则与输入(含已盖章的 credentialRef),供调试台「开始调试」复用重跑。
   dataset.setLastRun(rule, { [param]: keyword.value })
   if (!isTauri) {
     runNotice.value = '真实运行仅在桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
@@ -65,7 +88,8 @@ async function runCompiled(rule: Rule) {
   }
   running.value = true
   try {
-    const out = await runRule(rule, { [param]: keyword.value })
+    const credentials = await resolveRuleCredentials(rule)
+    const out = await runRule(rule, { [param]: keyword.value }, credentials)
     // 引擎 RunOutput.records 以列显示名为键(assemble_output 用 col.name),故 field 取 name。
     const cols = rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type }))
     // 即便 0 条也写入(active=true):数据预览据此显示「本次未抓到数据」空态,
@@ -106,7 +130,10 @@ const statusMeta: Record<string, { label: string; cls: string }> = {
 const depLabel = (by: 'input' | number | 'unknown') =>
   by === 'input' ? '用户输入' : by === 'unknown' ? '未解析' : `步骤 ${by + 1}`
 
-onMounted(parse)
+onMounted(() => {
+  parse()
+  credStore.restore()
+})
 </script>
 
 <template>
@@ -160,6 +187,47 @@ onMounted(parse)
               </button>
               <button type="button" class="btn-run alt" :disabled="running" @click="runCatalog">抓子列表</button>
               <button type="button" class="btn-run alt" :disabled="running" @click="runBook">跟随子页面</button>
+            </div>
+            <div v-if="isTauri" class="cred-row">
+              <span class="cred-label">凭据(可选)</span>
+              <DropdownMenuRoot>
+                <DropdownMenuTrigger as-child>
+                  <button type="button" class="cred-pick">
+                    {{ selectedCredName }}
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="#8a86a6"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuContent class="rp-menu" align="start" :side-offset="6">
+                    <DropdownMenuItem
+                      class="rp-menu-item"
+                      :class="{ active: selectedCredId === null }"
+                      @select="selectedCredId = null">
+                      不使用凭据
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      v-for="c in cookieCreds"
+                      :key="c.dbId"
+                      class="rp-menu-item"
+                      :class="{ active: selectedCredId === c.dbId }"
+                      @select="selectedCredId = c.dbId ?? null">
+                      {{ c.name }}
+                      <span class="rp-menu-dim">{{ c.domain }}</span>
+                    </DropdownMenuItem>
+                    <div v-if="!cookieCreds.length" class="rp-menu-empty">无 Cookie 凭据 · 去凭据管理添加</div>
+                  </DropdownMenuContent>
+                </DropdownMenuPortal>
+              </DropdownMenuRoot>
             </div>
             <div class="run-hint">
               搜索预览 = 结果列表;抓子列表 = 每条结果的子项列表;跟随子页面 = 进入前几个子页抓内容(3
@@ -492,6 +560,33 @@ onMounted(parse)
 .run-msg.notice {
   color: #d8b27a;
 }
+.cred-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+}
+.cred-label {
+  font-size: 11px;
+  color: #7a7a87;
+}
+.cred-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid #34344a;
+  color: #cdccd8;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cred-pick:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
 
 /* 概览 */
 .ov-row {
@@ -765,5 +860,51 @@ onMounted(parse)
 }
 .msg.warn {
   color: #d8b27a;
+}
+</style>
+
+<style>
+/* Reka 下拉 portal 到 body 外,scoped 够不着 → 全局样式(rp- 前缀避免外泄) */
+.rp-menu {
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #16161e;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 1001;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+.rp-menu:focus {
+  outline: none;
+}
+.rp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: #cdccd8;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+}
+.rp-menu-item[data-highlighted] {
+  background: rgba(124, 92, 252, 0.16);
+  color: #fff;
+}
+.rp-menu-item.active {
+  color: var(--accent-text);
+}
+.rp-menu-dim {
+  margin-left: auto;
+  font-size: 11px;
+  color: #7a7a87;
+}
+.rp-menu-empty {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: #7a7a87;
 }
 </style>
