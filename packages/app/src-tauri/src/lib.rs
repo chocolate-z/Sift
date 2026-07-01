@@ -1,3 +1,4 @@
+mod credential_cmd;
 mod download_cmd;
 mod engine_cmd;
 mod storage_cmd;
@@ -33,7 +34,12 @@ pub fn run() {
       storage_cmd::db_list_completed,
       storage_cmd::db_delete_completed,
       download_cmd::save_text_file,
-      download_cmd::download_files_live
+      download_cmd::download_files_live,
+      credential_cmd::cred_save,
+      credential_cmd::cred_update,
+      credential_cmd::cred_list,
+      credential_cmd::cred_get,
+      credential_cmd::cred_delete
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import {
   DialogClose,
   DialogContent,
@@ -9,10 +9,12 @@ import {
   DialogRoot,
   DialogTitle
 } from 'reka-ui'
-// 凭据本地 AES-256 加密,明文仅在请求时于内存临时解密。
+// 密文存 OS 钥匙串(Windows 凭据管理器 / macOS Keychain),明文仅运行时按 credentialRef 读取。
 import { useCredentialsStore, type Cred, type CredType } from '@/stores/credentials'
 
 const store = useCredentialsStore()
+// 跨重启恢复凭据元信息(本会话已有则不覆盖)。
+onMounted(() => store.restore())
 
 const statusMeta = {
   valid: { label: '有效', cls: 'valid' },
@@ -54,15 +56,22 @@ function openEdit(c: Cred) {
 function submitCred() {
   if (!form.name.trim()) return
   if (editingId.value === null) {
-    store.addCred({
-      name: form.name.trim(),
-      type: form.type,
-      domain: form.domain.trim(),
-      status: 'valid',
-      lastUse: '从未使用'
-    })
+    store.addCred(
+      {
+        name: form.name.trim(),
+        type: form.type,
+        domain: form.domain.trim(),
+        status: 'valid',
+        lastUse: '刚添加'
+      },
+      form.secret
+    )
   } else {
-    store.updateCred(editingId.value, { name: form.name.trim(), type: form.type, domain: form.domain.trim() })
+    store.updateCred(
+      editingId.value,
+      { name: form.name.trim(), type: form.type, domain: form.domain.trim() },
+      form.secret
+    )
   }
   dialogOpen.value = false
 }
@@ -74,7 +83,7 @@ function submitCred() {
       <div class="head-row">
         <div>
           <h1>凭据管理</h1>
-          <p class="sub">Cookie、Token 与代理凭据 · 本地 AES-256 加密,绝不上传</p>
+          <p class="sub">Cookie、Token 与代理凭据 · 系统钥匙串加密,绝不上传</p>
         </div>
         <button type="button" class="btn-new" @click="openCreate">+ 新增凭据</button>
       </div>
@@ -159,7 +168,7 @@ function submitCred() {
           </svg>
         </div>
         <div class="empty-title">还没有凭据</div>
-        <div class="empty-desc">新增 Cookie、Token 或代理凭据 —— 全部本地 AES-256 加密存储,绝不上传。</div>
+        <div class="empty-desc">新增 Cookie、Token 或代理凭据 —— 密文经系统钥匙串加密存储,绝不上传。</div>
         <button type="button" class="btn-new tall" @click="openCreate">+ 新增凭据</button>
       </div>
     </div>
@@ -171,7 +180,7 @@ function submitCred() {
         <DialogContent class="cr-dialog" @open-auto-focus.prevent>
           <DialogTitle class="cr-dialog-title">{{ editingId === null ? '新增凭据' : '编辑凭据' }}</DialogTitle>
           <DialogDescription class="cr-dialog-desc">
-            凭据本地 AES-256 加密存储,明文仅在发起请求时于内存临时解密。
+            密文存系统钥匙串,明文仅在发起请求时于内存临时解密。
           </DialogDescription>
           <div class="cr-field">
             <label>名称</label>

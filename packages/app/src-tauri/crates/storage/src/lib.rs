@@ -44,6 +44,18 @@ pub struct CompletedRow {
     pub created_at: String,
 }
 
+/// 一条凭据的元信息(**不含密文**——密文进 OS 钥匙串,这里只存可列出的元数据)。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialRow {
+    pub id: i64,
+    pub name: String,
+    pub domain: String,
+    pub cred_type: String,
+    pub status: String,
+    pub created_at: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -67,6 +79,14 @@ CREATE TABLE IF NOT EXISTS completed_records (
     size       TEXT NOT NULL DEFAULT '',
     count      TEXT NOT NULL DEFAULT '',
     source     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS credentials (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    domain     TEXT NOT NULL DEFAULT '',
+    cred_type  TEXT NOT NULL DEFAULT 'Cookie',
+    status     TEXT NOT NULL DEFAULT 'valid',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#;
@@ -207,6 +227,65 @@ impl Db {
         )?;
         Ok(n > 0)
     }
+
+    /// 存一条凭据元信息(密文另存钥匙串),返回新 id。
+    pub fn save_credential(
+        &self,
+        name: &str,
+        domain: &str,
+        cred_type: &str,
+        status: &str,
+    ) -> Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO credentials (name, domain, cred_type, status) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![name, domain, cred_type, status],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 列出凭据元信息(新→旧;不含密文)。
+    pub fn list_credentials(&self) -> Result<Vec<CredentialRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, domain, cred_type, status, created_at FROM credentials ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(CredentialRow {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                domain: r.get(2)?,
+                cred_type: r.get(3)?,
+                status: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 更新一条凭据元信息(密文另在钥匙串更新),返回是否更到。
+    pub fn update_credential(
+        &self,
+        id: i64,
+        name: &str,
+        domain: &str,
+        cred_type: &str,
+        status: &str,
+    ) -> Result<bool> {
+        let conn = self.lock();
+        let n = conn.execute(
+            "UPDATE credentials SET name = ?2, domain = ?3, cred_type = ?4, status = ?5 WHERE id = ?1",
+            rusqlite::params![id, name, domain, cred_type, status],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// 删除一条凭据元信息,返回是否删到。
+    pub fn delete_credential(&self, id: i64) -> Result<bool> {
+        let conn = self.lock();
+        let n = conn.execute("DELETE FROM credentials WHERE id = ?1", rusqlite::params![id])?;
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -260,6 +339,28 @@ mod tests {
         assert!(db.delete_completed(id).unwrap());
         assert_eq!(db.list_completed().unwrap().len(), 0);
         assert!(!db.delete_completed(999).unwrap());
+    }
+
+    #[test]
+    fn credential_meta_crud_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.save_credential("站点 Cookie", "www.example.com", "Cookie", "valid").unwrap();
+        assert!(id > 0);
+
+        let list = db.list_credentials().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "站点 Cookie");
+        assert_eq!(list[0].cred_type, "Cookie");
+        assert!(!list[0].created_at.is_empty());
+
+        assert!(db.update_credential(id, "站点 Cookie", "www.example.com", "Token", "expiring").unwrap());
+        let updated = db.list_credentials().unwrap();
+        assert_eq!(updated[0].cred_type, "Token");
+        assert_eq!(updated[0].status, "expiring");
+
+        assert!(db.delete_credential(id).unwrap());
+        assert_eq!(db.list_credentials().unwrap().len(), 0);
+        assert!(!db.delete_credential(999).unwrap());
     }
 
     #[test]
