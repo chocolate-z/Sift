@@ -138,10 +138,10 @@ async function runCompiled(rule: Rule) {
   runError.value = null
   runNotice.value = null
   const param = rule.entry.kind === 'keyword' ? rule.entry.param : 'keyword'
-  // 挂载凭据:把 credentialRef 盖到每步请求(引擎按 cfg.credentialRef 精确解出 Cookie)。
+  // 挂载凭据:把 credentialRef 填到未自带凭据的步(??= 不覆盖规则本身声明的引用)。
   if (selectedCredId.value != null) {
     const ref = credRef(selectedCredId.value)
-    for (const step of rule.steps) step.request.credentialRef = ref
+    for (const step of rule.steps) step.request.credentialRef ??= ref
   }
   // 记录最近规则与输入(含已盖章的 credentialRef),供调试台「开始调试」复用重跑。
   dataset.setLastRun(rule, { [param]: keyword.value })

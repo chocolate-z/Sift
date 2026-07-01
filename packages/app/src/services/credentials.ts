@@ -62,9 +62,19 @@ export async function resolveRuleCredentials(rule: Rule): Promise<Record<string,
     if (step.request.credentialRef) refs.add(step.request.credentialRef)
   }
   const map: Record<string, string> = {}
+  const failed: string[] = []
   for (const ref of refs) {
     const m = /^cred-(\d+)$/.exec(ref)
-    if (m) map[ref] = await getCredential(Number(m[1]))
+    if (!m) continue
+    try {
+      map[ref] = await getCredential(Number(m[1]))
+    } catch {
+      failed.push(ref)
+    }
+  }
+  // 有引用解不出(被删 / 钥匙串缺失)则报出具体 ref,而非笼统「运行失败」。
+  if (failed.length) {
+    throw new Error(`凭据无法读取(可能已删除或钥匙串缺失):${failed.join('、')}`)
   }
   return map
 }

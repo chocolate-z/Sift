@@ -333,6 +333,14 @@ async fn paginate_param(
         let empty = parsed.records.is_empty();
         pages.push(parsed.records);
         if empty {
+            // 空页即停(防失控),但不再静默:区分「首页即 0 条(疑选择器未命中/被拦截)」
+            // 与「翻到底」,让调试台可见,而非把解析失败误当没有下一页。
+            let hint = if page == start {
+                "(首页即 0 条,疑选择器未命中或被拦截,未必到底)"
+            } else {
+                "(视为翻到底)"
+            };
+            warnings.push(format!("[{step_id}] 第 {page} 页 0 条,停止翻页{hint}"));
             break;
         }
         page += page_step;

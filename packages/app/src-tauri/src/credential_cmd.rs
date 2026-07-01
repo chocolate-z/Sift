@@ -47,8 +47,20 @@ pub fn cred_update(
     let ok = db
         .update_credential(id, &meta.name, &meta.domain, &meta.cred_type, &meta.status)
         .map_err(|e| e.to_string())?;
+    // id 不存在:未改任何行,绝不写钥匙串(否则造无元信息的孤儿密文)。
+    if !ok {
+        return Ok(false);
+    }
     if !secret.is_empty() {
-        entry(id).and_then(|en| en.set_password(&secret).map_err(|e| e.to_string()))?;
+        // 备份旧密文,写新密文失败则回滚,避免「库已更新、钥匙串半写」的撕裂态。
+        let en = entry(id)?;
+        let old = en.get_password().ok();
+        if let Err(e) = en.set_password(&secret) {
+            if let Some(old) = old {
+                let _ = en.set_password(&old);
+            }
+            return Err(format!("密文更新失败: {e}"));
+        }
     }
     Ok(ok)
 }
