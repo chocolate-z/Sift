@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   DropdownMenuContent,
   DropdownMenuItem,
@@ -10,6 +10,8 @@ import {
 import { useCompletedStore, type DoneRecord } from '@/stores/completed'
 
 const store = useCompletedStore()
+// 跨重启恢复已完成记录(本会话已有则不覆盖)。
+onMounted(() => store.restore())
 
 const searchText = ref('')
 const typeFilter = ref<'all' | '文本' | '图片' | '数据'>('all')

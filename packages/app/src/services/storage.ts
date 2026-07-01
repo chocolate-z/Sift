@@ -49,3 +49,35 @@ export async function loadDataset(id: number): Promise<{ columns: DatasetColumn[
 export function deleteDataset(id: number): Promise<boolean> {
   return invokeCmd<boolean>('db_delete_dataset', { id })
 }
+
+/** 已完成记录(导出/下载产物;跨重启留存)。 */
+export interface SavedCompleted {
+  id: number
+  name: string
+  fileType: string
+  icon: string
+  path: string
+  size: string
+  count: string
+  source: string
+  createdAt: string
+}
+export interface CompletedInput {
+  name: string
+  fileType: string
+  icon: string
+  path: string
+  size: string
+  count: string
+  source: string
+}
+
+export function saveCompleted(rec: CompletedInput): Promise<number> {
+  return invokeCmd<number>('db_save_completed', { rec })
+}
+export function listCompleted(): Promise<SavedCompleted[]> {
+  return invokeCmd<SavedCompleted[]>('db_list_completed')
+}
+export function deleteCompleted(id: number): Promise<boolean> {
+  return invokeCmd<boolean>('db_delete_completed', { id })
+}

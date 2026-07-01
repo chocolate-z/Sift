@@ -29,6 +29,21 @@ pub struct DatasetBlob {
     pub rows: String,
 }
 
+/// 一条已完成记录(导出/下载产物;列表 + 跨重启留存用)。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletedRow {
+    pub id: i64,
+    pub name: String,
+    pub file_type: String,
+    pub icon: String,
+    pub path: String,
+    pub size: String,
+    pub count: String,
+    pub source: String,
+    pub created_at: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -41,6 +56,17 @@ CREATE TABLE IF NOT EXISTS saved_datasets (
     columns    TEXT NOT NULL,
     rows       TEXT NOT NULL,
     row_count  INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS completed_records (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    file_type  TEXT NOT NULL DEFAULT '',
+    icon       TEXT NOT NULL DEFAULT '',
+    path       TEXT NOT NULL DEFAULT '',
+    size       TEXT NOT NULL DEFAULT '',
+    count      TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#;
@@ -127,6 +153,60 @@ impl Db {
         )?;
         Ok(n > 0)
     }
+
+    /// 存一条已完成记录,返回新 id。
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_completed(
+        &self,
+        name: &str,
+        file_type: &str,
+        icon: &str,
+        path: &str,
+        size: &str,
+        count: &str,
+        source: &str,
+    ) -> Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO completed_records (name, file_type, icon, path, size, count, source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![name, file_type, icon, path, size, count, source],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 列出已完成记录(新→旧)。
+    pub fn list_completed(&self) -> Result<Vec<CompletedRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, file_type, icon, path, size, count, source, created_at \
+             FROM completed_records ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(CompletedRow {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                file_type: r.get(2)?,
+                icon: r.get(3)?,
+                path: r.get(4)?,
+                size: r.get(5)?,
+                count: r.get(6)?,
+                source: r.get(7)?,
+                created_at: r.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 删除一条已完成记录,返回是否删到。
+    pub fn delete_completed(&self, id: i64) -> Result<bool> {
+        let conn = self.lock();
+        let n = conn.execute(
+            "DELETE FROM completed_records WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +240,26 @@ mod tests {
         assert!(db.delete_dataset(id).unwrap());
         assert!(db.load_dataset(id).unwrap().is_none());
         assert_eq!(db.list_datasets().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn completed_save_list_delete_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db
+            .save_completed("示例列表.txt", "文本", "txt", "/dl/Sift/a.txt", "12 KB", "8 条", "示例源")
+            .unwrap();
+        assert!(id > 0);
+
+        let list = db.list_completed().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "示例列表.txt");
+        assert_eq!(list[0].icon, "txt");
+        assert_eq!(list[0].count, "8 条");
+        assert!(!list[0].created_at.is_empty());
+
+        assert!(db.delete_completed(id).unwrap());
+        assert_eq!(db.list_completed().unwrap().len(), 0);
+        assert!(!db.delete_completed(999).unwrap());
     }
 
     #[test]
