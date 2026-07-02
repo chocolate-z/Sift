@@ -91,6 +91,43 @@ const PICKER_INIT_JS: &str = r#"
     }
     return parts.join(' > ');
   }
+  // 重复结构检测(port 自 visual-picker/repeat-detect):点一个 → 找到重复列表项与容器。
+  function signatureOf(el) {
+    var cls = classesOf(el).slice().sort();
+    return el.tagName.toLowerCase() + (cls.length ? '.' + cls.join('.') : '');
+  }
+  function detectRepeat(target) {
+    var node = target;
+    while (node && node.parentElement && node.tagName && node.tagName.toLowerCase() !== 'body') {
+      var sig = signatureOf(node);
+      var sibs = 0, kids = node.parentElement.children;
+      for (var i = 0; i < kids.length; i++) { if (signatureOf(kids[i]) === sig) sibs++; }
+      if (sibs >= 2) return { item: node, container: node.parentElement };
+      node = node.parentElement;
+    }
+    return null;
+  }
+  // 列表项 → 目标的相对选择器(item 本身返回 '')。
+  function pathWithinItem(item, target) {
+    if (item === target) return '';
+    var parts = [];
+    var node = target;
+    while (node && node !== item) {
+      var tag = node.tagName.toLowerCase();
+      var sem = classesOf(node);
+      parts.unshift(sem.length ? tag + '.' + esc(sem[0]) : tag);
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  // 匹配「所有」重复项的选择器(容器 > 项签名,不带 nth-of-type,故命中整列)。
+  function itemSelectorOf(rep) {
+    var containerSel = selectorFor(rep.container);
+    var tag = rep.item.tagName.toLowerCase();
+    var sem = classesOf(rep.item);
+    var itemSeg = sem.length ? tag + '.' + esc(sem[0]) : tag;
+    return containerSel ? containerSel + ' > ' + itemSeg : itemSeg;
+  }
   var last = null;
   document.addEventListener('mouseover', function (e) {
     ensureStyle();
@@ -104,13 +141,22 @@ const PICKER_INIT_JS: &str = r#"
   document.addEventListener('click', function (e) {
     e.preventDefault();
     e.stopPropagation();
+    var el = e.target;
     // 生成前摘掉注入的高亮类,别让它混进选择器。
-    if (e.target && e.target.classList) e.target.classList.remove(HL);
+    if (el && el.classList) el.classList.remove(HL);
     if (last && last.classList) last.classList.remove(HL);
-    var sel = selectorFor(e.target);
+    var rep = detectRepeat(el);
+    var payload;
+    if (rep) {
+      // 列表项 = 匹配所有重复项的选择器;字段 = 相对列表项(点中项本身则为空 = 取项自身文本)。
+      payload = { field: pathWithinItem(rep.item, el), container: itemSelectorOf(rep) };
+    } else {
+      // 无重复结构:绝对选择器,无列表项。
+      payload = { field: selectorFor(el), container: '' };
+    }
     try {
       // 走已授权的核心事件插件命令(远程 webview 调不了应用自定义命令),主窗口 listen。
-      var p = window.__TAURI_INTERNALS__.invoke('plugin:event|emit', { event: 'picker:selected', payload: sel });
+      var p = window.__TAURI_INTERNALS__.invoke('plugin:event|emit', { event: 'picker:selected', payload: payload });
       if (p && p.catch) p.catch(function () {});
     } catch (err) {}
     return false;
@@ -131,12 +177,13 @@ const PICKER_INIT_JS: &str = r#"
 /// 打开(或导航到)点选 WebView 加载目标网址,注入点选脚本。
 #[tauri::command]
 pub async fn open_picker(app: AppHandle, url: String) -> Result<(), String> {
-    let parsed: tauri::Url = url.parse().map_err(|_| format!("无效网址: {url}"))?;
+    // 已开则只聚焦,不 navigate——重新导航会重载页面且注入脚本可能不重跑,导致再次点选失效;
+    // 保住首次注入的处理器一直存活,才能连续多字段点选。换网址请先关闭点选窗口再开。
     if let Some(w) = app.get_webview_window("picker") {
-        w.navigate(parsed).map_err(|e| e.to_string())?;
         let _ = w.set_focus();
         return Ok(());
     }
+    let parsed: tauri::Url = url.parse().map_err(|_| format!("无效网址: {url}"))?;
     WebviewWindowBuilder::new(&app, "picker", WebviewUrl::External(parsed))
         .title("点选采集 — 点击页面元素选取")
         .inner_size(1100.0, 800.0)

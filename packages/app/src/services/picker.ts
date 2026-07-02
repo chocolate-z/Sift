@@ -10,11 +10,17 @@ export async function openPicker(url: string): Promise<void> {
   await invoke('open_picker', { url })
 }
 
-/** 监听点选窗口回传的选择器;返回取消监听函数。 */
-export async function onPickerSelected(cb: (selector: string) => void): Promise<() => void> {
+/** 点选回传:field=字段选择器(有 container 时相对列表项),container=重复列表容器选择器(可空)。 */
+export interface PickResult {
+  field: string
+  container: string
+}
+
+/** 监听点选窗口回传的选中结果(点一个→自动带出整列容器);返回取消监听函数。 */
+export async function onPickerSelected(cb: (r: PickResult) => void): Promise<() => void> {
   if (!isTauri) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
-  return listen<string>('picker:selected', (e) => cb(e.payload))
+  return listen<PickResult>('picker:selected', (e) => cb(e.payload))
 }
 
 /** 请求点选窗口高亮匹配该选择器的所有元素(空串=清除高亮)。 */

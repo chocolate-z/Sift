@@ -24,7 +24,7 @@ const pickMode = ref(true)
 const pickedTitle = ref('示例条目 2')
 const page = ref(1)
 const url = ref('https://example.com/list')
-const listSelector = ref('.product-card')
+const listSelector = ref('')
 const running = ref(false)
 const runErr = ref<string | null>(null)
 const runNotice = ref<string | null>(null)
@@ -127,10 +127,21 @@ async function startPick(id: number) {
 
 let unlistenCount: (() => void) | null = null
 let lastPreviewId: number | null = null
+// 字段选择器在有「列表项」时是相对之的 → 高亮/计数时拼成整列选择器。
+function fullSelector(f: Field): string {
+  const ls = listSelector.value.trim()
+  const s = f.selector.trim()
+  return ls && s ? `${ls} ${s}` : s || ls
+}
 // 编辑/聚焦某字段选择器 → 请求点选窗口高亮所有匹配元素(回传匹配数走 onPickerCount)。
 function previewField(f: Field) {
   lastPreviewId = f.id
-  highlightInPicker(f.selector)
+  highlightInPicker(fullSelector(f))
+}
+// 编辑「列表项」选择器 → 高亮所有列表容器/项(不归属某字段,故不记 lastPreviewId)。
+function onListSelectorInput() {
+  lastPreviewId = null
+  highlightInPicker(listSelector.value.trim())
 }
 function matchLabel(f: Field): string {
   if (f.match == null) return '未高亮'
@@ -222,11 +233,22 @@ function addPageRule() {
   showFlash('page')
 }
 onMounted(async () => {
-  unlistenPick = await onPickerSelected((sel) => {
+  unlistenPick = await onPickerSelected((r) => {
+    // 每次点选都用最新检测到的容器刷新「列表项」——点另一个列表即切到新列表(同列表则同值)。
+    if (r.container) listSelector.value = r.container
     const f = fields.value.find((x) => x.id === activePickFieldId.value)
-    if (f) {
-      f.selector = sel
-      previewField(f)
+    if (r.field) {
+      // 点中项内具体元素 → 填该字段。
+      if (f) {
+        f.selector = r.field
+        runNotice.value = null
+        previewField(f)
+      }
+    } else {
+      // 点中的是整个列表项本身(非项内字段)→ 只带入列表项,提示点选项内字段,并高亮整列。
+      runNotice.value = '已带入「列表项」,请在弹窗里点选项内的具体字段(如标题、价格)'
+      lastPreviewId = null
+      highlightInPicker(listSelector.value)
     }
   })
   unlistenCount = await onPickerCount((n) => {
@@ -348,7 +370,8 @@ onBeforeUnmount(() => {
             v-model="listSelector"
             class="ls-v mono"
             placeholder="重复项容器选择器,如 .product-card(留空 = 单页抽取)"
-            spellcheck="false" />
+            spellcheck="false"
+            @input="onListSelectorInput" />
         </div>
 
         <div class="fields-scroll">
