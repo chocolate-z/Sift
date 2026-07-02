@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "picker",
+  "description": "点选采集 WebView:加载远程页,注入脚本经 IPC 回传选中的 CSS 选择器。只放行 IPC 回连,不授予敏感命令(picker 窗口不进 default 能力,拿不到 cred_get 等)。",
+  "windows": ["picker"],
+  "remote": {
+    "urls": ["http://*", "https://*"]
+  },
+  "permissions": ["core:event:allow-emit", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

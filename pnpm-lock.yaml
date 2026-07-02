@@ -99,7 +99,11 @@ importers:
         specifier: workspace:*
         version: link:../core-ir
 
-  packages/visual-picker: {}
+  packages/visual-picker:
+    dependencies:
+      '@sift/core-ir':
+        specifier: workspace:*
+        version: link:../core-ir
 
 packages:
 

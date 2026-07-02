@@ -5,3 +5,4 @@
 export * from './types'
 export * from './selector-gen'
 export * from './repeat-detect'
+export * from './compile'

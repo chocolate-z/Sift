@@ -2,6 +2,7 @@ mod credential_cmd;
 mod download_cmd;
 mod engine_cmd;
 mod opener_cmd;
+mod picker_cmd;
 mod storage_cmd;
 
 use tauri::Manager;
@@ -42,6 +43,7 @@ pub fn run() {
             download_cmd::download_files_live,
             opener_cmd::open_path,
             opener_cmd::reveal_path,
+            picker_cmd::open_picker,
             credential_cmd::cred_save,
             credential_cmd::cred_update,
             credential_cmd::cred_list,

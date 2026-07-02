@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ChevronDown, Pencil, Search, TriangleAlert } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import {
@@ -9,15 +9,25 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger
 } from 'reka-ui'
+import { compileVisualRule, type VisualField } from '@sift/visual-picker'
 import { useTasksStore } from '@/stores/tasks'
+import { isTauri, runRule } from '@/services/engine'
+import { highlightInPicker, onPickerCount, onPickerSelected, openPicker } from '@/services/picker'
+import { saveDataset } from '@/services/storage'
+import { useDatasetStore } from '@/stores/dataset'
 
 const router = useRouter()
 const tasks = useTasksStore()
+const dataset = useDatasetStore()
 
 const pickMode = ref(true)
 const pickedTitle = ref('示例条目 2')
 const page = ref(1)
 const url = ref('https://example.com/list')
+const listSelector = ref('.product-card')
+const running = ref(false)
+const runErr = ref<string | null>(null)
+const runNotice = ref<string | null>(null)
 
 const books = [
   { title: '示例条目 1', price: '¥39.00' },
@@ -38,6 +48,8 @@ interface Field {
   attr: string
   dot: string
   lazy?: boolean
+  /** 点选窗口回传的实时匹配数(undefined=未高亮,-1=无效,-2=空)。 */
+  match?: number
 }
 const TYPE_OPTS = ['文本', '数字', '图片', '链接']
 const ATTR_OPTS = ['文本', '@href', '@src', '@data-src']
@@ -45,7 +57,7 @@ const fields = ref<Field[]>([
   {
     id: ++uid,
     name: '标题',
-    selector: '.product-card .title',
+    selector: '.title',
     type: '文本',
     robust: 3,
     robustLabel: '良好',
@@ -55,7 +67,7 @@ const fields = ref<Field[]>([
   {
     id: ++uid,
     name: '价格',
-    selector: '.product-card .price',
+    selector: '.price',
     type: '数字',
     robust: 4,
     robustLabel: '优秀',
@@ -65,7 +77,7 @@ const fields = ref<Field[]>([
   {
     id: ++uid,
     name: '封面图',
-    selector: '.product-card img',
+    selector: 'img',
     type: '图片',
     robust: 2,
     robustLabel: '一般',
@@ -93,8 +105,97 @@ function removeField(id: number) {
   const i = fields.value.findIndex((f) => f.id === id)
   if (i >= 0) fields.value.splice(i, 1)
 }
-function focusSelector(e: MouseEvent) {
-  ;(e.currentTarget as HTMLElement)?.parentElement?.querySelector('input')?.focus()
+// 点选:铅笔图标 → 标记当前字段为「待填」,打开点选 WebView;在真实页面点元素即回填。
+const activePickFieldId = ref<number | null>(null)
+let unlistenPick: (() => void) | null = null
+async function openPage() {
+  runErr.value = null
+  if (!url.value.trim()) {
+    runErr.value = '请先填写目标网址'
+    return
+  }
+  try {
+    await openPicker(url.value.trim())
+  } catch (e) {
+    runErr.value = e instanceof Error ? e.message : String(e)
+  }
+}
+async function startPick(id: number) {
+  activePickFieldId.value = id
+  await openPage()
+}
+
+let unlistenCount: (() => void) | null = null
+let lastPreviewId: number | null = null
+// 编辑/聚焦某字段选择器 → 请求点选窗口高亮所有匹配元素(回传匹配数走 onPickerCount)。
+function previewField(f: Field) {
+  lastPreviewId = f.id
+  highlightInPicker(f.selector)
+}
+function matchLabel(f: Field): string {
+  if (f.match == null) return '未高亮'
+  if (f.match === -1) return '选择器无效'
+  if (f.match === -2) return '空'
+  return `匹配 ${f.match} 项`
+}
+
+// 归一化点选屏字段 → compileVisualRule 输入(去中文/@前缀)。
+function normAttr(a: string): string | undefined {
+  return !a || a === '文本' ? undefined : a.replace(/^@/, '')
+}
+function normType(t: string): VisualField['type'] {
+  if (t === '图片') return 'image'
+  if (t === '链接') return 'url'
+  if (t === '数字') return 'number'
+  return 'string'
+}
+// 预览数据:网址 + 列表项选择器 + 字段 → compileVisualRule → runRule → /data。
+async function runPreview() {
+  runErr.value = null
+  runNotice.value = null
+  const spec = {
+    url: url.value.trim(),
+    listSelector: listSelector.value.trim() || undefined,
+    fields: fields.value
+      .filter((f) => f.name.trim() && f.selector.trim())
+      .map((f) => ({
+        name: f.name.trim(),
+        selector: f.selector.trim(),
+        attr: normAttr(f.attr),
+        type: normType(f.type)
+      }))
+  }
+  if (!spec.url) {
+    runErr.value = '请先填写目标网址'
+    return
+  }
+  if (!spec.fields.length) {
+    runErr.value = '请先添加至少一个带选择器的字段'
+    return
+  }
+  const rule = compileVisualRule(spec)
+  dataset.setLastRun(rule, {})
+  if (!isTauri) {
+    runNotice.value = '真实运行仅桌面端可用(浏览器预览无 Tauri 引擎)。请用 pnpm tauri:dev 运行。'
+    return
+  }
+  running.value = true
+  try {
+    const out = await runRule(rule, {})
+    const cols = rule.output.columns.map((c) => ({ name: c.name, field: c.name, type: c.type }))
+    dataset.setResult(cols, out.records, rule.meta.name, out.warnings)
+    if (out.records.length) {
+      saveDataset(rule.meta.name, rule.meta.name, cols, out.records)
+        .then((id) => dataset.setCurrentId(id))
+        .catch(() => {})
+    }
+    router.push('/data')
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e)
+    runErr.value = `运行失败:${msg}`
+  } finally {
+    running.value = false
+  }
 }
 
 // 加载 / 完成 / 保存为任务 —— 部分动作待引擎,现给瞬时反馈
@@ -120,8 +221,23 @@ function saveAsTask() {
 function addPageRule() {
   showFlash('page')
 }
+onMounted(async () => {
+  unlistenPick = await onPickerSelected((sel) => {
+    const f = fields.value.find((x) => x.id === activePickFieldId.value)
+    if (f) {
+      f.selector = sel
+      previewField(f)
+    }
+  })
+  unlistenCount = await onPickerCount((n) => {
+    const f = fields.value.find((x) => x.id === lastPreviewId)
+    if (f) f.match = n
+  })
+})
 onBeforeUnmount(() => {
   if (flashTimer) clearTimeout(flashTimer)
+  unlistenPick?.()
+  unlistenCount?.()
 })
 </script>
 
@@ -140,10 +256,13 @@ onBeforeUnmount(() => {
         <path d="M8 7.4v3.4M8 5.2v.01" stroke-linecap="round" />
       </svg>
       <span>
-        点选采集目前为
-        <b>预览</b>
-        功能,尚未接入采集引擎(下方为示意界面)。要真正录入并运行规则,请用
-        <button type="button" class="pn-link" @click="router.push('/import/paste')">规则导入 ›</button>
+        填目标网址,点字段旁
+        <b>铅笔图标</b>
+        弹出真实页面
+        <b>点选取</b>
+        (JS 站也可),或直接
+        <b>输入/编辑选择器</b>
+        ——编辑时会在页面里实时高亮匹配元素;点「预览数据」采集。左侧为示意缩略,真实页面在弹出窗口。
       </span>
     </div>
 
@@ -157,9 +276,7 @@ onBeforeUnmount(() => {
         <i class="dot ok" />
         已加载
       </span>
-      <button type="button" class="btn ghost" @click="showFlash('open')">
-        {{ flash === 'open' ? '加载中…' : '打开' }}
-      </button>
+      <button type="button" class="btn ghost" @click="openPage">打开点选</button>
       <button type="button" class="btn" @click="showFlash('done')">{{ flash === 'done' ? '已完成 ✓' : '完成' }}</button>
       <label class="toggle-wrap">
         <span>点选模式</span>
@@ -225,6 +342,15 @@ onBeforeUnmount(() => {
           <span class="fh-ok">✓ 每列匹配 5 项</span>
         </div>
 
+        <div class="list-sel">
+          <span class="ls-k">列表项</span>
+          <input
+            v-model="listSelector"
+            class="ls-v mono"
+            placeholder="重复项容器选择器,如 .product-card(留空 = 单页抽取)"
+            spellcheck="false" />
+        </div>
+
         <div class="fields-scroll">
           <div v-for="f in fields" :key="f.id" class="fcard">
             <div class="fc-top">
@@ -234,8 +360,13 @@ onBeforeUnmount(() => {
             </div>
             <div class="fc-sel">
               <span class="sel-k">选择器</span>
-              <input class="sel-v mono" v-model="f.selector" />
-              <Pencil :size="13" class="sel-edit" @click="focusSelector" />
+              <input class="sel-v mono" v-model="f.selector" @focus="previewField(f)" @input="previewField(f)" />
+              <Pencil
+                :size="13"
+                class="sel-edit"
+                :class="{ picking: activePickFieldId === f.id }"
+                title="在页面上点选此字段"
+                @click="startPick(f.id)" />
             </div>
             <div class="fc-row">
               <DropdownMenuRoot>
@@ -258,7 +389,7 @@ onBeforeUnmount(() => {
                   </DropdownMenuContent>
                 </DropdownMenuPortal>
               </DropdownMenuRoot>
-              <span class="chip ok sm">✓ 匹配 5 项</span>
+              <span class="chip ok sm" :class="{ bad: (f.match ?? 0) < 0 }">{{ matchLabel(f) }}</span>
             </div>
             <div v-if="f.lazy" class="fc-warn">
               <TriangleAlert :size="13" />
@@ -302,8 +433,12 @@ onBeforeUnmount(() => {
               {{ flash === 'page' ? '✓ 已添加分页规则' : '+ 分页规则' }}
             </button>
           </div>
+          <div v-if="runErr" class="run-msg err">✕ {{ runErr }}</div>
+          <div v-else-if="runNotice" class="run-msg notice">{{ runNotice }}</div>
           <div class="fields-foot">
-            <button type="button" class="btn primary wide" @click="router.push('/data')">预览数据</button>
+            <button type="button" class="btn primary wide" :disabled="running" @click="runPreview">
+              {{ running ? '采集中…' : '预览数据' }}
+            </button>
             <button type="button" class="btn ghost" @click="saveAsTask">
               {{ flash === 'save' ? '已保存 ✓' : '保存为任务' }}
             </button>
@@ -357,6 +492,43 @@ onBeforeUnmount(() => {
 .pn-link:hover {
   text-decoration: underline;
 }
+.list-sel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.ls-k {
+  flex: none;
+  font-size: 11px;
+  color: #7a7a87;
+}
+.ls-v {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  background: #0b0b11;
+  border: 1px solid #24242e;
+  border-radius: 8px;
+  color: #cdccd8;
+  font-size: 12px;
+  outline: none;
+}
+.ls-v:focus {
+  border-color: var(--accent);
+}
+.run-msg {
+  margin: 0 0 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.run-msg.err {
+  color: #f1837d;
+}
+.run-msg.notice {
+  color: #d8b27a;
+}
 .urlbar {
   display: flex;
   align-items: center;
@@ -408,6 +580,9 @@ onBeforeUnmount(() => {
 .chip.sm {
   padding: 2px 7px;
   font-size: 11px;
+}
+.chip.bad {
+  color: #f1837d;
 }
 .btn {
   height: 32px;
@@ -742,6 +917,12 @@ onBeforeUnmount(() => {
   color: var(--text-dim);
   cursor: pointer;
   flex: none;
+}
+.sel-edit:hover {
+  color: var(--accent-text);
+}
+.sel-edit.picking {
+  color: var(--accent);
 }
 .fc-row {
   display: flex;
