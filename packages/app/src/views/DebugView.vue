@@ -119,7 +119,7 @@ async function runDebug() {
     <div v-if="!hasRule" class="empty">
       <div class="empty-title">还没有可调试的规则</div>
       <div class="empty-desc">先在「粘贴规则」里跑一次采集,再回到这里逐步调试,查看每步的请求 / 响应 / 解析。</div>
-      <button type="button" class="btn-primary" @click="router.push('/import/paste')">去粘贴规则</button>
+      <button type="button" class="btn-primary" @click="router.push('/pick')">去点选采集</button>
     </div>
 
     <!-- 运行出错 -->

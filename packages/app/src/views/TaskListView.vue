@@ -236,10 +236,9 @@ function submitTask() {
           </svg>
         </div>
         <div class="empty-title">{{ searchText.trim() || filterType !== 'all' ? '没有匹配的任务' : '还没有任务' }}</div>
-        <div class="empty-desc">从点选采集像圈图一样选取字段,或粘贴第三方规则导入 —— 都会出现在这里。</div>
+        <div class="empty-desc">从点选采集像圈图一样选取字段 —— 采集结果与任务都会出现在这里。</div>
         <div class="empty-actions">
           <button type="button" class="btn-new tall" @click="router.push('/pick')">去点选采集</button>
-          <button type="button" class="btn-ghost" @click="router.push('/import')">导入规则</button>
         </div>
       </div>
     </div>

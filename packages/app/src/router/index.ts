@@ -5,21 +5,8 @@ import type { RouteRecordRaw } from 'vue-router'
 const ph = () => import('@/views/PlaceholderView.vue')
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/import' },
+  { path: '/', redirect: '/pick' },
   { path: '/pick', name: 'pick', component: () => import('@/views/PickerView.vue'), meta: { title: '点选采集' } },
-  {
-    path: '/import',
-    name: 'import',
-    component: () => import('@/views/RuleImportView.vue'),
-    meta: { title: '规则导入' }
-  },
-  // 粘贴规则现场解析(非导航,从规则导入进入)
-  {
-    path: '/import/paste',
-    name: 'import-paste',
-    component: () => import('@/views/RulePasteView.vue'),
-    meta: { title: '粘贴规则' }
-  },
   {
     path: '/tasks',
     name: 'tasks',

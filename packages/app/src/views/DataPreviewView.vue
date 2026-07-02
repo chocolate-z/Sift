@@ -486,7 +486,7 @@ onMounted(async () => {
               : '导入采集规则并运行,或用点选采集,结果会显示在这里。'
           }}
         </div>
-        <button type="button" class="btn-primary" @click="router.push('/import')">去采集</button>
+        <button type="button" class="btn-primary" @click="router.push('/pick')">去采集</button>
       </div>
     </div>
   </section>

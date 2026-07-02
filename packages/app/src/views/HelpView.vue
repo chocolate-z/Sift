@@ -56,23 +56,6 @@ function toggleFaq(i: number) {
             <div class="g-title">点选采集入门</div>
             <div class="g-desc">像圈图一样在网页上点击元素即可生成字段,自动匹配整列。</div>
           </div>
-          <div class="guide" @click="router.push('/import')">
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="#9d83ff"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="g-ico">
-              <path d="M6.4 2.5C5 2.5 5 4 5 5c0 1-.6 2-1.6 2 1 0 1.6 1 1.6 2 0 1 0 2.5 1.4 2.5" />
-              <path d="M9.6 2.5C11 2.5 11 4 11 5c0 1 .6 2 1.6 2-1 0-1.6 1-1.6 2 0 1 0 2.5-1.4 2.5" />
-            </svg>
-            <div class="g-title">导入第三方规则</div>
-            <div class="g-desc">粘贴 API 源或网页源规则,Sift 自动解码并还原采集链路。</div>
-          </div>
         </div>
 
         <!-- 常见问题 -->

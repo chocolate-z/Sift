@@ -2,7 +2,6 @@
 import { ref, type Component } from 'vue'
 import {
   Bell,
-  Braces,
   CalendarClock,
   CheckCircle2,
   CircleHelp,
@@ -46,7 +45,6 @@ const groups: NavGroup[] = [
     name: '采集',
     items: [
       { label: '点选采集', to: '/pick', icon: MousePointerClick },
-      { label: '规则导入', to: '/import', icon: Braces },
       { label: '任务列表', to: '/tasks', icon: ListChecks }
     ]
   },
@@ -169,7 +167,7 @@ function acceptDisclaimer() {
           </div>
         </nav>
         <div class="rules-wrap">
-          <div class="rules-card" @click="router.push('/import')">
+          <div class="rules-card" @click="router.push('/pick')">
             <span class="rc-ico">
               <svg
                 width="14"
